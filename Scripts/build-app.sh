@@ -1,0 +1,16 @@
+#!/bin/bash
+set -euo pipefail
+ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+cd "$ROOT"
+swift build -c release
+BIN="$(swift build -c release --show-bin-path)"
+APP="$ROOT/dist/English Compass.app"
+mkdir -p "$APP/Contents/MacOS"
+cp "$BIN/EnglishCompass" "$APP/Contents/MacOS/EnglishCompass"
+cp "$ROOT/Resources/Info.plist" "$APP/Contents/Info.plist"
+for directory in "$APP/Contents/Resources/Backend" "$APP/Contents/Resources/Scripts"; do
+    if [ -e "$directory" ] || [ -L "$directory" ]; then find "$directory" -depth -delete; fi
+done
+xattr -cr "$APP"
+codesign --force --sign - "$APP"
+printf 'App built: %s\n' "$APP"
