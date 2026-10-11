@@ -1,5 +1,20 @@
 # Native-Only Validation: 2026-10-11
 
+## Single-Answer Compatibility and Compact Layout
+
+Writing accepts a single final plain-text answer, a candidates-only JSON object,
+or a single structured answer with optional explanation/summary/emphasis. Answer
+text stays exact. Malformed JSON, empty answers, unexpected keys/types, reasoning,
+length-truncated completions and tool calls are not promoted to usable text.
+Existing three-answer validation and translation contracts remain unchanged.
+
+Cards use 15-point answers, 10-point padding and inline small Copy buttons; gaps
+are 8 points. Result content height is 500 points for multiple answers and 300
+for one answer, with scrolling for longer content. Single answers use a neutral
+label rather than claiming a style the provider did not return.
+57 tests discovered: 56 passed, one optional live test skipped. Fixture previews
+include both compact three-answer and single-answer states.
+
 ## Three Writing Versions
 
 Writing now returns general, conversational and academic answers in fixed order,

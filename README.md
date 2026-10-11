@@ -51,6 +51,10 @@ Use Up/Down to select and Return to copy while viewing writing results. Input
 editing keeps normal native keyboard behavior. Emphasis is display-only: copying
 or replacing uses the exact plain-text answer, not explanations or bold markers.
 The Changes view is removed. Model and elapsed time remain in the footer.
+If writing returns only one answer (structured or plain text), it is shown as a
+single answer rather than rejected or padded with invented alternatives. Empty,
+malformed structured responses, reasoning tags and incomplete/tool-call results
+still fail validation. Answer cards use compact spacing with inline Copy controls.
 
 | Action | Shortcut | Behavior |
 |---|---|---|

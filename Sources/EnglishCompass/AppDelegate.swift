@@ -26,7 +26,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             DispatchQueue.main.async { [weak self] in
                 guard let self, self.session.phase == phase, let panel = self.panel else { return }
                 let bounds = (panel.screen ?? NSScreen.main)?.visibleFrame ?? panel.frame
-                let height = min(phase == .result && self.session.action == .writeEnglish ? 700.0 : 470.0,
+                let writingHeight = self.session.result?.candidates.count == 1 ? 300.0 : 500.0
+                let height = min(phase == .result && self.session.action == .writeEnglish ? writingHeight : 470.0,
                                  bounds.height - 40)
                 let top = panel.frame.maxY
                 panel.setContentSize(NSSize(width: 540, height: height))

@@ -16,8 +16,8 @@ final class WritingContractTests: XCTestCase {
         let parsed = try CloudAPIContract.parse(data: envelope(valid), statusCode: 200, action: .writeEnglish)
         XCTAssertEqual(parsed, valid)
         XCTAssertThrowsError(try CloudAPIContract.parse(data: envelope(valid), statusCode: 200, action: .understandEnglish))
-        XCTAssertThrowsError(try CloudAPIContract.parse(data: envelope(ModelResult(candidates: ["Old answer"])),
-                                                       statusCode: 200, action: .writeEnglish))
+        XCTAssertEqual(try CloudAPIContract.parse(data: envelope(ModelResult(candidates: ["Old answer"])),
+                                                  statusCode: 200, action: .writeEnglish).candidates, ["Old answer"])
     }
     func testIncompleteExplanationSummaryOrInvalidHighlightsFailClosed() throws {
         var fixtures: [ModelResult] = []

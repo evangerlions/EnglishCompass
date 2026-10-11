@@ -58,6 +58,7 @@ public enum CloudAPIContract {
         }
         if let function = message["function_call"], !(function is NSNull) { throw AssistantFailure.invalidResult }
         // reasoning_content is never read or returned; only final content is parsed.
+        if action == .writeEnglish { return try WritingPayload.parse(content) }
         guard let value = try jsonObject(Data(content.utf8)) as? [String: Any],
               let candidates = value["candidates"] as? [String],
               let explanations = value["explanations"] as? [String],

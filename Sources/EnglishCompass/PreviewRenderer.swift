@@ -15,7 +15,11 @@ enum PreviewRenderer {
         session.input = "Please helps me fix this bug."
         session.result = WritingFixture.result
         session.chooseCandidate(0); session.phase = .result
-        try save(ResultView(session: session), size: NSSize(width: 540, height: 700), to: directory.appendingPathComponent("result-fixture.png"))
+        try save(ResultView(session: session), size: NSSize(width: 540, height: 500), to: directory.appendingPathComponent("result-fixture.png"))
+        session.input = "I don't want to inertia scroll."
+        session.result = ModelResult(candidates: ["I don't want inertial scrolling."])
+        session.chooseCandidate(0)
+        try save(ResultView(session: session), size: NSSize(width: 540, height: 300), to: directory.appendingPathComponent("single-answer-fixture.png"))
         session.phase = .error; session.message = AssistantFailure.cloudUnavailable.localizedDescription
         try save(ResultView(session: session), size: NSSize(width: 540, height: 400), to: directory.appendingPathComponent("error-fixture.png"))
         session.action = .understandEnglish; session.result = ModelResult(candidates: ["请帮我修复这个问题。"])

@@ -4,6 +4,20 @@ import AssistantCore
 @testable import EnglishCompass
 
 final class WritingResultsTests: XCTestCase {
+    @MainActor func testSingleAnswerSelectionStaysOnOnlyAnswer() {
+        let session = AssistantSession(preferences: Preferences(), accessibility: AccessibilityBridge(),
+                                       inference: InferenceService())
+        session.result = ModelResult(candidates: ["Only answer"])
+        session.phase = .result
+        session.chooseCandidate(0)
+        session.moveCandidate(1)
+        session.moveCandidate(-1)
+        XCTAssertEqual(session.candidateIndex, 0)
+        let board = NSPasteboard.withUniqueName()
+        defer { board.releaseGlobally() }
+        session.copy(to: board)
+        XCTAssertEqual(board.string(forType: .string), "Only answer")
+    }
     @MainActor func testSelectionBoundsAndCopyUseExactAnswerWithoutExplanationOrMarkup() {
         let suite = "WritingResultsTests.\(UUID().uuidString)"
         let defaults = UserDefaults(suiteName: suite)!
