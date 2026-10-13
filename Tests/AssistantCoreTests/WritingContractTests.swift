@@ -19,18 +19,25 @@ final class WritingContractTests: XCTestCase {
         XCTAssertEqual(try CloudAPIContract.parse(data: envelope(ModelResult(candidates: ["Old answer"])),
                                                   statusCode: 200, action: .writeEnglish).candidates, ["Old answer"])
     }
-    func testIncompleteExplanationSummaryOrInvalidHighlightsFailClosed() throws {
+    func testIncompleteExplanationSummaryOrInvalidHighlightShapeFailsClosed() throws {
         var fixtures: [ModelResult] = []
         var result = valid; result.summary = " "; fixtures.append(result)
         result = valid; result.explanations = ["one", "two"]; fixtures.append(result)
         result = valid; result.explanations[0] = " "; fixtures.append(result)
         result = valid; result.highlights = []; fixtures.append(result)
-        result = valid; result.highlights[0] = ["not in answer"]; fixtures.append(result)
-        result = valid; result.highlights[0] = [""]; fixtures.append(result)
         result = valid; result.summary = "<think>hidden"; fixtures.append(result)
         for fixture in fixtures {
             XCTAssertThrowsError(try CloudAPIContract.parse(data: envelope(fixture), statusCode: 200, action: .writeEnglish))
         }
+    }
+    func testMismatchedOrBlankHighlightsAreDroppedWithoutDiscardingUsableAnswers() throws {
+        var result = valid
+        result.highlights = [["not in answer", "Neutral", ""], ["Neutral"], ["Formal"]]
+        let parsed = try CloudAPIContract.parse(data: envelope(result), statusCode: 200, action: .writeEnglish)
+        XCTAssertEqual(parsed.candidates, valid.candidates)
+        XCTAssertEqual(parsed.explanations, valid.explanations)
+        XCTAssertEqual(parsed.summary, valid.summary)
+        XCTAssertEqual(parsed.highlights, [["Neutral"], [], ["Formal"]])
     }
     func testSinglePhraseHighlightShapeNormalizesWithoutChangingAnswer() throws {
         var value = try JSONSerialization.jsonObject(with: JSONEncoder().encode(valid)) as! [String: Any]

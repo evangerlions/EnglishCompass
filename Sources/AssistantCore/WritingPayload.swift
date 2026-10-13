@@ -6,13 +6,15 @@ enum WritingPayload {
         let trimmed = content.trimmingCharacters(in: .whitespacesAndNewlines)
         if let value = try? JSONSerialization.jsonObject(with: Data(content.utf8)) {
             guard let object = value as? [String: Any],
-                  Set(object.keys).isSubset(of: ["candidates", "explanations", "summary", "highlights"]),
+                  Set(object.keys).isSubset(of: ["candidates", "explanations", "summary", "highlights", "markdownCandidates"]),
+                  (object["markdownCandidates"] == nil || (object["markdownCandidates"] as? [String])?.isEmpty == true),
                   let candidates = object["candidates"] as? [String], (1...3).contains(candidates.count) else {
                 throw AssistantFailure.invalidResult
             }
             let explanations: [String] = try optional(object, key: "explanations", default: [])
             let summary: String = try optional(object, key: "summary", default: "")
-            let highlights = try emphasis(object["highlights"])
+            let rawHighlights = try emphasis(object["highlights"])
+            let highlights = sanitize(rawHighlights, for: candidates)
             return try ModelResult(candidates: candidates, explanations: explanations,
                                    summary: summary, highlights: highlights).validated()
         }
@@ -34,5 +36,15 @@ enum WritingPayload {
         if let arrays = value as? [[String]] { return arrays }
         if let strings = value as? [String] { return strings.map { $0.isEmpty ? [] : [$0] } }
         throw AssistantFailure.invalidResult
+    }
+
+    private static func sanitize(_ highlights: [[String]], for candidates: [String]) -> [[String]] {
+        guard highlights.count == candidates.count else { return highlights }
+        return highlights.enumerated().map { index, terms in
+            Array(terms.filter { term in
+                !term.isEmpty && candidates[index].contains(term) &&
+                !term.contains("<think") && !term.contains("</think")
+            }.prefix(3))
+        }
     }
 }

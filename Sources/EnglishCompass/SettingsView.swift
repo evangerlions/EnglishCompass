@@ -33,6 +33,7 @@ struct SettingsView: View {
     @State private var status = ""
     @State private var trusted = false
     @State private var login = false
+    @State private var promptAction: AssistantAction = .writeEnglish
     private let accent = Color(red: 0.08, green: 0.43, blue: 0.40)
 
     var body: some View {
@@ -187,6 +188,29 @@ struct SettingsView: View {
                         Button("Clear") { preferences.additionalInstructions = "" }
                             .controlSize(.small).disabled(preferences.additionalInstructions.isEmpty)
                     }
+                }
+            }
+            surface {
+                VStack(alignment: .leading, spacing: 12) {
+                    HStack {
+                        Text("System prompt preview").font(.system(size: 13, weight: .semibold))
+                        Spacer()
+                        Picker("Action", selection: $promptAction) {
+                            Text("Write").tag(AssistantAction.writeEnglish)
+                            Text("Understand").tag(AssistantAction.understandEnglish)
+                        }.pickerStyle(.segmented).frame(width: 190)
+                    }
+                    ScrollView {
+                        Text((try? CloudAPIContract.prompt(action: promptAction,
+                                                          additionalInstructions: preferences.additionalInstructions)) ?? "Unavailable")
+                            .font(.system(size: 11, design: .monospaced))
+                            .textSelection(.enabled)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .padding(10)
+                    }
+                    .frame(height: 170)
+                    .background(Color(nsColor: .textBackgroundColor), in: RoundedRectangle(cornerRadius: 8))
+                    .overlay(RoundedRectangle(cornerRadius: 8).strokeBorder(Color.primary.opacity(0.10)))
                 }
             }
             Text("Stored on this Mac and included in each model request. Don't enter passwords or API keys here. Task and safety rules still apply.")

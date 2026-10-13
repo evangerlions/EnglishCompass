@@ -8,7 +8,7 @@ enum PreviewRenderer {
     static func render(to directory: URL, session: AssistantSession, preferences: Preferences,
                        accessibility: AccessibilityBridge, inference: InferenceService) throws {
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
-        _ = session.begin(.writeEnglish, capture: false)
+        session.begin(.writeEnglish, capture: false)
         try save(ResultView(session: session), size: NSSize(width: 540, height: 360), to: directory.appendingPathComponent("input-fixture.png"))
         session.phase = .processing
         try save(ResultView(session: session), size: NSSize(width: 540, height: 310), to: directory.appendingPathComponent("loading-fixture.png"))

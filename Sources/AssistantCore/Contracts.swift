@@ -11,24 +11,39 @@ public struct ModelResult: Codable, Equatable, Sendable {
     public var explanations: [String]
     public var summary: String
     public var highlights: [[String]]
-    public init(candidates: [String], explanations: [String] = [], summary: String = "", highlights: [[String]] = []) {
+    public var markdownCandidates: [String]
+    public init(candidates: [String], explanations: [String] = [], summary: String = "", highlights: [[String]] = [], markdownCandidates: [String] = []) {
         self.candidates = candidates
         self.explanations = explanations
         self.summary = summary
         self.highlights = highlights
+        self.markdownCandidates = markdownCandidates
     }
     public func validated() throws -> ModelResult {
         let rich = candidates.count == 3
         guard (1...3).contains(candidates.count), explanations.count <= (rich ? 3 : 2),
-              !rich || (explanations.count == 3 && explanations.allSatisfy({ !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }) && !summary.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && highlights.count == 3),
+              !rich || (explanations.count == 3 && explanations.allSatisfy({ !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }) && (markdownCandidates.count == 3 || (!summary.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && highlights.count == 3))),
+              markdownCandidates.isEmpty || (markdownCandidates.count == candidates.count && markdownCandidates.allSatisfy({ !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty })),
               highlights.isEmpty || (highlights.count == candidates.count && highlights.enumerated().allSatisfy { index, terms in
                   terms.count <= 3 && terms.allSatisfy { !$0.isEmpty && candidates[index].contains($0) }
               }),
               candidates.allSatisfy({ !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }),
-              (candidates + explanations + [summary] + highlights.flatMap { $0 }).allSatisfy({ !$0.contains("<think") && !$0.contains("</think") })
+              (candidates + explanations + [summary] + highlights.flatMap { $0 } + markdownCandidates).allSatisfy({ !$0.contains("<think") && !$0.contains("</think") })
         else { throw AssistantFailure.invalidResult }
         return self
     }
+}
+
+/// Carries the raw provider response body when a 200 payload fails content parsing,
+/// so the UI can offer a collapsible, colorized debug view. Never logged or persisted.
+public struct InvalidResultError: Error, LocalizedError, Sendable {
+    public let underlying: AssistantFailure
+    public let rawResponse: String
+    public init(underlying: AssistantFailure, rawResponse: String) {
+        self.underlying = underlying
+        self.rawResponse = rawResponse
+    }
+    public var errorDescription: String? { underlying.errorDescription }
 }
 
 public enum AssistantFailure: String, Error, LocalizedError, Sendable {

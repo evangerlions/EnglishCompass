@@ -12,8 +12,15 @@ final class CloudSessionDelegate: NSObject, URLSessionTaskDelegate {
 
 @MainActor
 protocol InferencePerforming: AnyObject {
+    var lastRawRequest: String? { get }
+    var lastRawResponse: String? { get }
     func infer(text: String, action: AssistantAction, additionalInstructions: String) async throws -> ModelResult
     func cancel()
+}
+
+extension InferencePerforming {
+    var lastRawRequest: String? { nil }
+    var lastRawResponse: String? { nil }
 }
 
 @MainActor
@@ -24,6 +31,8 @@ final class InferenceService: InferencePerforming {
     private var cachedCredential: String?
     private var active: Task<ModelResult, Error>?
     private var operationID: UUID?
+    private(set) var lastRawRequest: String?
+    private(set) var lastRawResponse: String?
 
     init(session: URLSession? = nil, credential: @escaping () throws -> String = CloudCredentialStore.read) {
         self.credential = credential
@@ -51,6 +60,8 @@ final class InferenceService: InferencePerforming {
         try CloudAPIContract.validateInput(text)
         let key = try cachedCredential ?? credential()
         let request = try CloudAPIContract.request(text: text, action: action, additionalInstructions: additionalInstructions, key: key)
+        lastRawRequest = request.httpBody.flatMap { String(data: $0, encoding: .utf8) }
+        lastRawResponse = nil
         cachedCredential = key
         let id = UUID()
         operationID = id
@@ -60,7 +71,6 @@ final class InferenceService: InferencePerforming {
             defer { bytes.task.cancel() }
             try Task.checkCancellation()
             guard let http = response as? HTTPURLResponse else { throw AssistantFailure.cloudUnavailable }
-            if http.statusCode != 200 { return try CloudAPIContract.parse(data: Data(), statusCode: http.statusCode) }
             guard response.expectedContentLength <= 128_000 else { throw AssistantFailure.invalidResult }
             var data = Data()
             for try await byte in bytes {
@@ -68,7 +78,16 @@ final class InferenceService: InferencePerforming {
                 guard data.count < 128_000 else { throw AssistantFailure.invalidResult }
                 data.append(byte)
             }
-            return try CloudAPIContract.parse(data: data, statusCode: http.statusCode, action: action)
+            await MainActor.run {
+                self.lastRawResponse = String(data: data, encoding: .utf8) ?? "<binary response>"
+            }
+            do {
+                return try CloudAPIContract.parse(data: data, statusCode: http.statusCode, action: action)
+            } catch let failure as AssistantFailure where failure == .invalidResult && http.statusCode == 200 {
+                // 200 OK but the content could not be parsed: surface the raw body for debug.
+                throw InvalidResultError(underlying: failure,
+                                         rawResponse: String(data: data, encoding: .utf8) ?? "<binary response>")
+            }
         }
         active = task
         defer {
@@ -88,6 +107,7 @@ final class InferenceService: InferencePerforming {
                 throw AssistantFailure.cancelled
             }
             Diagnostics.event("cloud_request_failed", action: action.rawValue)
+            if let debug = error as? InvalidResultError { throw debug }
             if let failure = error as? AssistantFailure { throw failure }
             if (error as? URLError)?.code == .timedOut { throw AssistantFailure.timedOut }
             // Never expose provider response bodies, drafts or credential-bearing errors.

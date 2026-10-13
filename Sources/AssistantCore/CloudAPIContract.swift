@@ -26,7 +26,7 @@ public enum CloudAPIContract {
             "enable_thinking": false,
             "temperature": 0.1,
             "max_tokens": action == .writeEnglish ? 2048 : 512,
-            "response_format": ["type": "json_object"],
+            "response_format": action == .writeEnglish ? ["type": "text"] : ["type": "json_object"],
             "stream": false
         ]
         var result = URLRequest(url: endpoint, cachePolicy: .reloadIgnoringLocalCacheData, timeoutInterval: 120)
@@ -58,7 +58,11 @@ public enum CloudAPIContract {
         }
         if let function = message["function_call"], !(function is NSNull) { throw AssistantFailure.invalidResult }
         // reasoning_content is never read or returned; only final content is parsed.
-        if action == .writeEnglish { return try WritingPayload.parse(content) }
+        if action == .writeEnglish {
+            if let markdown = try? WritingMarkdownPayload.parse(content) { return markdown }
+            // Keep compatibility with older provider responses during rollout.
+            return try WritingPayload.parse(content)
+        }
         guard let value = try jsonObject(Data(content.utf8)) as? [String: Any],
               let candidates = value["candidates"] as? [String],
               let explanations = value["explanations"] as? [String],
@@ -80,6 +84,10 @@ public enum CloudAPIContract {
         }).validated()
     }
 
+    public static func prompt(action: AssistantAction, additionalInstructions: String) throws -> String {
+        try systemPrompt(action: action, additionalInstructions: additionalInstructions)
+    }
+
     private static func systemPrompt(action: AssistantAction, additionalInstructions: String) throws -> String {
         let instruction: String
         switch action {
@@ -87,13 +95,10 @@ public enum CloudAPIContract {
             instruction = "Rewrite or translate the input into exactly three faithful English versions in this fixed order: " +
                 "general (natural and neutral), conversational (everyday spoken English), academic (precise and formal, never inflated). " +
                 "Keep the general version unchanged if already correct. Style differences must not change meaning. " +
-                "Return only a JSON object with exactly these keys: {\"candidates\":[\"general\",\"conversational\",\"academic\"]," +
-                "\"explanations\":[\"one brief Chinese sentence per version\",\"...\",\"...\"]," +
-                "\"summary\":\"two or three concise Chinese sentences about corrections, key expressions and usage differences\"," +
-                "\"highlights\":[[\"exact important phrase from first answer\"],[],[]]}. " +
-                "Highlights must be an array of exactly three arrays, never an array of strings. " +
-                "Each inner array contains zero to three short exact substrings of its corresponding plain-text answer. " +
-                "Never insert bold markers into candidates. No redundant summary, follow-up question or praise."
+                "Return only Markdown using exactly these four level-2 headings in order: ## General, ## Conversational, ## Academic, ## Notes. " +
+                "Under each of the first three headings write only that English answer. Use standard inline Markdown such as **bold** or `code` when useful, but no extra headings or commentary. " +
+                "Under ## Notes write exactly three Chinese bullet items in the same order, one brief explanation per version. " +
+                "Do not use JSON or fenced code blocks. Do not repeat the answers in Notes. No follow-up question or praise."
         case .understandEnglish:
             instruction = "Translate the user's selected English into Chinese faithfully, with at most two brief term explanations. " +
                 "Return only a JSON object: {\"candidates\":[\"transformed text\"],\"explanations\":[]}. " +

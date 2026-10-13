@@ -13,6 +13,8 @@ final class AssistantSession: ObservableObject {
     @Published var candidateIndex: Int? = nil
     @Published var message = ""
     @Published var warnings: [String] = []
+    @Published var rawResponse: String?
+    @Published var rawRequest: String?
     @Published private(set) var elapsedSeconds: TimeInterval?
     @Published private(set) var requestStartedAt: Date?
     @Published var sourceName = "Manual input"
@@ -35,23 +37,37 @@ final class AssistantSession: ObservableObject {
         !suggestion.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty &&
         target.map { accessibility.canWrite($0) } == true
     }
-    func begin(_ action: AssistantAction, capture: Bool = true) -> CGRect? {
+    func begin(_ action: AssistantAction, capture: Bool = true, completion: @escaping (CGRect?) -> Void = { _ in }) {
         cancel(close: false)
         self.action = action
         phase = .input; input = ""; suggestion = ""; result = nil; candidateIndex = nil
-        warnings = []; message = ""; target = nil; sourceName = "Manual input"
-        guard capture else { return nil }
-        do {
-            target = try accessibility.capture(action)
-            input = target!.snapshot.input
-            sourceName = target!.app.localizedName ?? "Selected app"
-            Diagnostics.event("text_read_success", action: action.rawValue)
-            process()
-        } catch {
-            message = error.localizedDescription
-            Diagnostics.event("text_read_unavailable", action: action.rawValue)
+        warnings = []; message = ""; target = nil; sourceName = "Manual input"; rawResponse = nil; rawRequest = nil
+        guard capture else {
+            completion(nil)
+            return
         }
-        return target?.anchor
+        // Do not activate our panel until capture finishes. The Cmd+C fallback
+        // must still be delivered to the source application.
+        let id = requestID
+        Task { [weak self] in
+            guard let self, self.requestID == id else { return }
+            do {
+                let captured = try await self.accessibility.capture(action)
+                guard self.requestID == id else { return }
+                self.target = captured
+                self.input = captured.snapshot.input
+                self.sourceName = captured.app.localizedName ?? "Selected app"
+                Diagnostics.event("text_read_success", action: action.rawValue)
+                completion(captured.anchor)
+                self.process()
+            } catch {
+                guard self.requestID == id else { return }
+                self.message = error.localizedDescription
+                self.phase = .error
+                Diagnostics.event("text_read_unavailable", action: action.rawValue)
+                completion(nil)
+            }
+        }
     }
     func pasteInput(from pasteboard: NSPasteboard = .general) {
         guard phase == .input || phase == .error else { return }
@@ -64,7 +80,7 @@ final class AssistantSession: ObservableObject {
         input = text
         target = nil; sourceName = "Manual input"
         result = nil; suggestion = ""; candidateIndex = nil
-        message = ""; warnings = []
+        message = ""; warnings = []; rawResponse = nil; rawRequest = nil
     }
     func process() {
         guard phase != .processing, !input.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
@@ -72,7 +88,7 @@ final class AssistantSession: ObservableObject {
             self.target = nil
             sourceName = "Manual input"
         }
-        phase = .processing; message = ""; result = nil; candidateIndex = nil; warnings = []
+        phase = .processing; message = ""; result = nil; candidateIndex = nil; warnings = []; rawResponse = nil
         elapsedSeconds = nil; requestStartedAt = Date()
         let id = UUID(); requestID = id
         let text = input, action = action, additionalInstructions = preferences.additionalInstructions
@@ -94,6 +110,8 @@ final class AssistantSession: ObservableObject {
                 guard !Task.isCancelled, requestID == id else { return }
                 elapsedSeconds = Date().timeIntervalSince(requestStartedAt ?? started)
                 requestStartedAt = nil
+                self.rawRequest = inference.lastRawRequest
+                self.rawResponse = inference.lastRawResponse
                 self.result = result
                 if action == .writeEnglish || result.candidates.count == 1 { chooseCandidate(0) }
                 phase = .result
@@ -103,7 +121,15 @@ final class AssistantSession: ObservableObject {
                 guard !Task.isCancelled, requestID == id else { return }
                 elapsedSeconds = Date().timeIntervalSince(requestStartedAt ?? started)
                 requestStartedAt = nil
-                phase = .error; message = error.localizedDescription
+                self.rawRequest = inference.lastRawRequest
+                self.rawResponse = inference.lastRawResponse
+                phase = .error
+                if let debug = error as? InvalidResultError {
+                    message = debug.errorDescription ?? "Error."
+                    rawResponse = debug.rawResponse
+                } else {
+                    message = error.localizedDescription
+                }
                 Diagnostics.event("inference_failed", action: action.rawValue, mode: "non-thinking")
             }
         }
@@ -152,7 +178,7 @@ final class AssistantSession: ObservableObject {
         phase = .input
         requestStartedAt = nil; elapsedSeconds = nil
         if close {
-            input = ""; suggestion = ""; result = nil; target = nil; warnings = []
+            input = ""; suggestion = ""; result = nil; target = nil; warnings = []; rawResponse = nil; rawRequest = nil
             onClose?()
         }
     }

@@ -56,7 +56,7 @@ final class SessionCancellationTests: XCTestCase {
         XCTAssertEqual(session.phase, .result)
         XCTAssertNil(session.requestStartedAt)
         XCTAssertGreaterThan(try XCTUnwrap(session.elapsedSeconds), 0)
-        _ = session.begin(.understandEnglish, capture: false)
+        session.begin(.understandEnglish, capture: false)
         XCTAssertNil(session.requestStartedAt)
         XCTAssertNil(session.elapsedSeconds)
     }

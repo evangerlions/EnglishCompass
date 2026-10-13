@@ -3,6 +3,7 @@ import AssistantCore
 
 struct ResultView: View {
     @ObservedObject var session: AssistantSession
+    @State private var showDebug = false
     private let accent = Color(red: 0.08, green: 0.43, blue: 0.40)
 
     var body: some View {
@@ -10,6 +11,12 @@ struct ResultView: View {
             HStack {
                 Text(session.action.title).font(.system(size: 13, weight: .semibold))
                 Spacer()
+                if session.rawRequest != nil || session.rawResponse != nil {
+                    Button { showDebug = true } label: { Image(systemName: "curlybraces") }
+                        .buttonStyle(.plain).foregroundStyle(.secondary)
+                        .help("Show raw request and response")
+                        .accessibilityLabel("Show raw request and response")
+                }
                 Button { session.onSettings?() } label: { Image(systemName: "gearshape") }
                     .buttonStyle(.plain).foregroundStyle(.secondary)
                     .help("Settings").accessibilityLabel("Settings")
@@ -20,6 +27,9 @@ struct ResultView: View {
             switch session.phase {
             case .input, .error:
                 if session.phase == .error, !session.message.isEmpty { notice(session.message) }
+                if session.phase == .error, let raw = session.rawResponse {
+                    JSONDebugView(raw: raw)
+                }
                 editor($session.input, id: "manual_input", placeholder: "Paste or type your text...")
                 HStack {
                     Button { session.pasteInput() } label: {
@@ -55,6 +65,9 @@ struct ResultView: View {
             footer
         }.padding(20).frame(width: 540).frame(maxHeight: .infinity, alignment: .top)
             .background(Color(nsColor: .windowBackgroundColor)).tint(accent)
+            .sheet(isPresented: $showDebug) {
+                RequestDebugSheet(request: session.rawRequest, response: session.rawResponse)
+            }
             .onExitCommand { session.cancel() }
     }
 

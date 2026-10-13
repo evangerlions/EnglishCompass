@@ -66,8 +66,14 @@ struct WritingResultsView: View {
                           systemImage: selected && session.message == "Copied." ? "checkmark" : "doc.on.doc")
                 }.controlSize(.small).accessibilityIdentifier("copy_answer_\(index)")
             }
-            Text(emphasized(result.candidates[index], terms: result.highlights.indices.contains(index) ? result.highlights[index] : []))
-                .font(.system(size: 15)).fixedSize(horizontal: false, vertical: true)
+            if result.markdownCandidates.indices.contains(index),
+               let rich = try? AttributedString(markdown: result.markdownCandidates[index],
+                                                options: .init(interpretedSyntax: .full)) {
+                Text(rich).font(.system(size: 15)).fixedSize(horizontal: false, vertical: true)
+            } else {
+                Text(emphasized(result.candidates[index], terms: result.highlights.indices.contains(index) ? result.highlights[index] : []))
+                    .font(.system(size: 15)).fixedSize(horizontal: false, vertical: true)
+            }
             if result.explanations.indices.contains(index) {
                 Text(result.explanations[index]).font(.system(size: 12)).foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)

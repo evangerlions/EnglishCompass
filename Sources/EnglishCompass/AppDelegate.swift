@@ -89,7 +89,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     @objc private func quit() { NSApp.terminate(nil) }
 
     private func showAssistant(_ action: AssistantAction, capture: Bool = true) {
-        let anchor = session.begin(action, capture: capture)
+        session.begin(action, capture: capture) { [weak self] anchor in
+            self?.presentAssistant(anchor: anchor)
+        }
+    }
+
+    private func presentAssistant(anchor: CGRect?) {
         if panel == nil {
             let window = NSPanel(contentRect: NSRect(x: 0, y: 0, width: 540, height: 470),
                                  styleMask: [.titled, .closable, .fullSizeContentView], backing: .buffered, defer: false)

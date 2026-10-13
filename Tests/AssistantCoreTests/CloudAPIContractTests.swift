@@ -42,7 +42,7 @@ final class CloudAPIContractTests: XCTestCase {
         XCTAssertEqual(body["stream"] as? Bool, false)
         XCTAssertEqual(body["temperature"] as? Double, 0.1)
         XCTAssertEqual(body["max_tokens"] as? Int, 2048)
-        XCTAssertEqual(body["response_format"] as? [String: String], ["type": "json_object"])
+        XCTAssertEqual(body["response_format"] as? [String: String], ["type": "text"])
         let messages = try XCTUnwrap(body["messages"] as? [[String: String]])
         XCTAssertEqual(messages.count, 2)
         XCTAssertEqual(messages[0]["role"], "system")
@@ -62,7 +62,11 @@ final class CloudAPIContractTests: XCTestCase {
             let prompt = try XCTUnwrap(messages.first?["content"])
             XCTAssertTrue(prompt.hasSuffix(instructions))
             XCTAssertTrue(prompt.contains("only when compatible"))
-            XCTAssertTrue(prompt.contains("Return only a JSON object"))
+            if action == .writeEnglish {
+                XCTAssertTrue(prompt.contains("Return only Markdown"))
+            } else {
+                XCTAssertTrue(prompt.contains("Return only a JSON object"))
+            }
             XCTAssertTrue(prompt.contains("Preserve negation"))
             XCTAssertFalse(prompt.contains("Protected terms:"))
             XCTAssertEqual(messages[1]["content"], "Synthetic input")

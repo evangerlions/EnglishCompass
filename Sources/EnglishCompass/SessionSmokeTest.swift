@@ -6,7 +6,7 @@ import AssistantCore
 @MainActor
 enum SessionSmokeTest {
     static func run(_ session: AssistantSession) async -> Bool {
-        _ = session.begin(.writeEnglish, capture: false)
+        session.begin(.writeEnglish, capture: false)
         session.input = "Please helps me fix this bug."
         session.process()
         guard session.phase == .processing else { return false }
@@ -14,11 +14,11 @@ enum SessionSmokeTest {
         guard session.phase == .result, session.suggestion == "Please help me fix this bug.", !session.canReplace else { return false }
         session.cancel()
         guard session.input.isEmpty, session.suggestion.isEmpty, session.result == nil else { return false }
-        _ = session.begin(.writeEnglish, capture: false)
+        session.begin(.writeEnglish, capture: false)
         session.input = "Cancelled fixture"
         session.process()
         session.cancel(close: false)
-        _ = session.begin(.understandEnglish, capture: false)
+        session.begin(.understandEnglish, capture: false)
         session.input = "Please help me fix this bug."
         session.process()
         try? await Task.sleep(for: .milliseconds(1200))
