@@ -88,6 +88,30 @@ final class AccessibilityBridge {
         return CapturedTarget(app: app, window: window, element: element, snapshot: snapshot, anchor: bounds(element), writebackEligible: writebackEligible)
     }
 
+    /// Selected text only, for Read Aloud. Uses the same AX lookups as capture
+    /// (pointer hit-test, then the focused element) and the same Cmd+C fallback,
+    /// but never substitutes the whole field value for an empty selection.
+    func readSelection() async throws -> String {
+        guard trusted else { throw AssistantFailure.permission }
+        guard let app = NSWorkspace.shared.frontmostApplication,
+              app.processIdentifier != ProcessInfo.processInfo.processIdentifier else { throw AssistantFailure.noText }
+        let application = AXUIElementCreateApplication(app.processIdentifier)
+        let focused = attribute(application, kAXFocusedUIElementAttribute).map { $0 as! AXUIElement } ?? application
+        let role = attribute(focused, kAXRoleAttribute) as? String ?? ""
+        let subrole = attribute(focused, kAXSubroleAttribute) as? String ?? ""
+        guard !subrole.contains("Secure"), !role.contains("Secure") else { throw AssistantFailure.secureField }
+        var selection: String?
+        if let location = CGEvent(source: nil)?.location, let hit = element(at: location) {
+            selection = selectedTextInHierarchy(startingAt: hit)?.text
+        }
+        if selection == nil { selection = selectedTextInHierarchy(startingAt: focused)?.text }
+        if selection == nil { selection = await copySelectedText(from: app) }
+        guard let text = selection?.trimmingCharacters(in: .whitespacesAndNewlines), !text.isEmpty else {
+            throw AssistantFailure.noText
+        }
+        return text
+    }
+
     /// Simulate Cmd+C in the captured source application and read the new
     /// pasteboard value. Restore the user's prior clipboard only if nobody else
     /// has changed it in the meantime.

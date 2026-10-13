@@ -1,5 +1,6 @@
 import SwiftUI
 import AppKit
+import AVFoundation
 import ServiceManagement
 import AssistantCore
 
@@ -27,8 +28,10 @@ private enum SettingsPage: String, CaseIterable, Identifiable {
 struct SettingsView: View {
     @ObservedObject var preferences: Preferences
     let accessibility: AccessibilityBridge
-    let onShortcut: (AssistantAction, Shortcut) -> String?
+    let onShortcut: (ShortcutKind, Shortcut) -> String?
     var onKeySaved: (String) -> Void = { _ in }
+    var onOpenAction: (AssistantAction) -> Void = { _ in }
+    var speech: SpeechService? = nil
     @State private var page: SettingsPage = .shortcuts
     @State private var status = ""
     @State private var trusted = false
@@ -114,19 +117,23 @@ struct SettingsView: View {
     private var shortcutsContent: some View {
         VStack(alignment: .leading, spacing: 20) {
             surface {
-                shortcutRow(.writeEnglish, preferences.writeShortcut, detail: "Polish a draft or turn it into English.")
+                shortcutRow(.write)
                 Divider().padding(.vertical, 12)
-                shortcutRow(.understandEnglish, preferences.understandShortcut, detail: "Translate selected English into Chinese.")
+                shortcutRow(.understand)
+                Divider().padding(.vertical, 12)
+                shortcutRow(.speak)
             }
             HStack {
                 Text("Click a shortcut to record a new combination.")
                     .font(.system(size: 12)).foregroundStyle(.secondary)
                 Spacer()
                 Button("Reset") {
-                    if let error = onShortcut(.writeEnglish, .write) { status = error }
-                    if let error = onShortcut(.understandEnglish, .understand) { status = error }
+                    for kind in ShortcutKind.allCases {
+                        if let error = onShortcut(kind, kind.defaultShortcut) { status = error }
+                    }
                 }.controlSize(.small)
             }
+            speechSettings
             surface {
                 Toggle(isOn: $login) {
                     VStack(alignment: .leading, spacing: 5) {
@@ -169,27 +176,16 @@ struct SettingsView: View {
 
     private var instructionsContent: some View {
         VStack(alignment: .leading, spacing: 16) {
-            surface {
-                VStack(alignment: .leading, spacing: 12) {
-                    HStack {
-                        Text("Additional instructions").font(.system(size: 13, weight: .semibold))
-                        Spacer()
-                        Text("Saved automatically").font(.system(size: 11)).foregroundStyle(.secondary)
-                    }
-                    NativeTextEditor(text: $preferences.additionalInstructions,
-                                     placeholder: "Use concise, natural English.\nKeep the tone friendly and professional.",
-                                     fontSize: 13, identifier: "additional_instructions", label: "Additional instructions")
-                        .frame(height: 190)
-                        .background(Color(nsColor: .textBackgroundColor), in: RoundedRectangle(cornerRadius: 8))
-                        .overlay(RoundedRectangle(cornerRadius: 8).strokeBorder(Color.primary.opacity(0.10)))
-                    HStack {
-                        Text("Applies to writing and translation.").font(.system(size: 12)).foregroundStyle(.secondary)
-                        Spacer()
-                        Button("Clear") { preferences.additionalInstructions = "" }
-                            .controlSize(.small).disabled(preferences.additionalInstructions.isEmpty)
-                    }
-                }
-            }
+            instructionEditor(title: "Write instructions",
+                              detail: "Used only by Write in English.",
+                              placeholder: "Use concise, natural English.\nKeep the tone friendly and professional.",
+                              text: $preferences.writeInstructions,
+                              identifier: "write_instructions")
+            instructionEditor(title: "Understand instructions",
+                              detail: "Used only by Understand English.",
+                              placeholder: "Explain useful terms and grammar for an English learner.\nKeep explanations concise.",
+                              text: $preferences.understandInstructions,
+                              identifier: "understand_instructions")
             surface {
                 VStack(alignment: .leading, spacing: 12) {
                     HStack {
@@ -202,7 +198,7 @@ struct SettingsView: View {
                     }
                     ScrollView {
                         Text((try? CloudAPIContract.prompt(action: promptAction,
-                                                          additionalInstructions: preferences.additionalInstructions)) ?? "Unavailable")
+                                                          additionalInstructions: preferences.instructions(for: promptAction))) ?? "Unavailable")
                             .font(.system(size: 11, design: .monospaced))
                             .textSelection(.enabled)
                             .frame(maxWidth: .infinity, alignment: .leading)
@@ -255,6 +251,31 @@ struct SettingsView: View {
         }
     }
 
+    private func instructionEditor(title: String, detail: String, placeholder: String,
+                                   text: Binding<String>, identifier: String) -> some View {
+        surface {
+            VStack(alignment: .leading, spacing: 12) {
+                HStack {
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text(title).font(.system(size: 13, weight: .semibold))
+                        Text(detail).font(.system(size: 11)).foregroundStyle(.secondary)
+                    }
+                    Spacer()
+                    Text("Saved automatically").font(.system(size: 11)).foregroundStyle(.secondary)
+                }
+                NativeTextEditor(text: text, placeholder: placeholder, fontSize: 13,
+                                 identifier: identifier, label: title)
+                    .frame(height: 110)
+                    .background(Color(nsColor: .textBackgroundColor), in: RoundedRectangle(cornerRadius: 8))
+                    .overlay(RoundedRectangle(cornerRadius: 8).strokeBorder(Color.primary.opacity(0.10)))
+                HStack {
+                    Spacer()
+                    Button("Clear") { text.wrappedValue = "" }
+                        .controlSize(.small).disabled(text.wrappedValue.isEmpty)
+                }
+            }
+        }
+    }
     private func surface<Content: View>(@ViewBuilder content: () -> Content) -> some View {
         VStack(alignment: .leading, spacing: 0) { content() }
             .frame(maxWidth: .infinity, alignment: .leading).padding(20)
@@ -262,15 +283,113 @@ struct SettingsView: View {
             .overlay(RoundedRectangle(cornerRadius: 12).strokeBorder(Color.primary.opacity(0.06)))
     }
     private func refreshPermissions() { trusted = accessibility.trusted }
-    private func shortcutRow(_ action: AssistantAction, _ shortcut: Shortcut, detail: String) -> some View {
+    private func shortcutRow(_ kind: ShortcutKind) -> some View {
         HStack(spacing: 12) {
-            VStack(alignment: .leading, spacing: 5) {
-                Text(action.title).font(.system(size: 13, weight: .medium))
-                Text(detail).font(.system(size: 11)).foregroundStyle(.secondary)
+            if let action = kind.action {
+                Button { onOpenAction(action) } label: {
+                    HStack(spacing: 8) {
+                        shortcutText(kind)
+                        Image(systemName: "arrow.up.forward.app")
+                            .font(.system(size: 12, weight: .medium)).foregroundStyle(accent)
+                        Spacer(minLength: 0)
+                    }.contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .help("Open \(kind.title)")
+                .accessibilityIdentifier("open_" + action.rawValue)
+            } else {
+                HStack(spacing: 8) {
+                    shortcutText(kind)
+                    Image(systemName: "speaker.wave.2")
+                        .font(.system(size: 12, weight: .medium)).foregroundStyle(accent)
+                    Spacer(minLength: 0)
+                }
             }
             Spacer()
-            ShortcutRecorder(label: shortcut.label) { new in status = onShortcut(action, new) ?? "Shortcut updated." }
-                .frame(width: 215, height: 30)
+            ShortcutRecorder(label: preferences.shortcut(for: kind).label) { new in
+                status = onShortcut(kind, new) ?? "Shortcut updated."
+            }
+            .frame(width: 215, height: 30)
+        }
+    }
+
+    private func shortcutText(_ kind: ShortcutKind) -> some View {
+        VStack(alignment: .leading, spacing: 5) {
+            Text(kind.title).font(.system(size: 13, weight: .medium))
+            Text(kind.detail).font(.system(size: 11)).foregroundStyle(.secondary)
+        }
+    }
+
+    // MARK: Read aloud
+
+    @ViewBuilder private var speechSettings: some View {
+        if let speech {
+            surface { SpeechVoiceSettings(preferences: preferences, speech: speech) }
+        }
+    }
+}
+
+/// Observes the speech service so newly downloaded voices appear immediately.
+private struct SpeechVoiceSettings: View {
+    @ObservedObject var preferences: Preferences
+    @ObservedObject var speech: SpeechService
+
+    var body: some View {
+        // Reading voicesRevision ties this list to voice-change notifications.
+        let _ = speech.voicesRevision
+        let voices = SpeechService.voices(for: preferences.speechAccent)
+        let best = voices.first
+        VStack(alignment: .leading, spacing: 14) {
+            HStack {
+                VStack(alignment: .leading, spacing: 5) {
+                    Text("Read aloud voice").font(.system(size: 13, weight: .medium))
+                    Text("On-device macOS speech. Nothing is uploaded.")
+                        .font(.system(size: 11)).foregroundStyle(.secondary)
+                }
+                Spacer()
+                SpeechPreviewButton(speech: speech)
+            }
+            Picker("Accent", selection: Binding(
+                get: { preferences.speechAccent },
+                set: { preferences.speechAccent = $0; preferences.speechVoice = "" }
+            )) {
+                Text("American").tag("en-US")
+                Text("British").tag("en-GB")
+            }
+            .pickerStyle(.segmented)
+            .frame(width: 260)
+            HStack(spacing: 6) {
+                Picker("Voice", selection: $preferences.speechVoice) {
+                    Text(best.map { "Best available (\(SpeechService.displayName($0)))" } ?? "Best available").tag("")
+                    ForEach(voices, id: \.identifier) { voice in
+                        Text(SpeechService.displayName(voice)).tag(voice.identifier)
+                    }
+                }
+                .frame(width: 380)
+                Button { speech.refreshVoices() } label: {
+                    Image(systemName: "arrow.clockwise")
+                        .font(.system(size: 11, weight: .medium))
+                }
+                .buttonStyle(.borderless)
+                .foregroundStyle(.secondary)
+                .help("Refresh voice list")
+                .accessibilityLabel("Refresh voice list")
+                .accessibilityIdentifier("refresh_voices")
+            }
+            HStack(spacing: 10) {
+                Text("Speed").font(.system(size: 12))
+                Image(systemName: "tortoise").foregroundStyle(.secondary)
+                Slider(value: $preferences.speechRate, in: 0.30...0.60)
+                    .frame(width: 220)
+                Image(systemName: "hare").foregroundStyle(.secondary)
+                Button("Reset") { preferences.speechRate = Preferences.defaultSpeechRate }
+                    .controlSize(.small)
+            }
+            if !voices.contains(where: { $0.quality != .default }) {
+                Text("For a more natural voice, download a Premium or Enhanced English voice in System Settings → Accessibility → Spoken Content → System Voice → Manage Voices.")
+                    .font(.system(size: 11)).foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
         }
     }
 }

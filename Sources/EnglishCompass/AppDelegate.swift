@@ -9,31 +9,42 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     private let accessibility = AccessibilityBridge()
     private let inference = InferenceService()
     private let shortcuts = GlobalShortcuts()
+    private lazy var speech = SpeechService(preferences: preferences)
     private var session: AssistantSession!
     private var item: NSStatusItem!
     private var panel: NSPanel?
     private var settingsWindow: NSWindow?
     private var phaseObservation: AnyCancellable?
+    private var overflowObservation: AnyCancellable?
+    private var readAloudTask: Task<Void, Never>?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         NSApp.setActivationPolicy(.accessory)
         NSApp.mainMenu = ApplicationMenus.make()
-        session = AssistantSession(preferences: preferences, accessibility: accessibility, inference: inference)
+        session = AssistantSession(preferences: preferences, accessibility: accessibility, inference: inference,
+                                   speech: speech)
         session.onClose = { [weak self] in self?.panel?.orderOut(nil) }
         session.onSettings = { [weak self] in self?.showSettings() }
         phaseObservation = session.$phase.sink { [weak self] phase in
-            // Published emits before assignment; resize after SwiftUI receives the new phase.
+            // Non-result states use a fixed height. Results start from it and are
+            // then fitted to their measured content by the overflow observer below.
             DispatchQueue.main.async { [weak self] in
-                guard let self, self.session.phase == phase, let panel = self.panel else { return }
-                let bounds = (panel.screen ?? NSScreen.main)?.visibleFrame ?? panel.frame
-                let writingHeight = self.session.result?.candidates.count == 1 ? 300.0 : 500.0
-                let height = min(phase == .result && self.session.action == .writeEnglish ? writingHeight : 470.0,
-                                 bounds.height - 40)
-                let top = panel.frame.maxY
-                panel.setContentSize(NSSize(width: 540, height: height))
-                panel.setFrameOrigin(NSPoint(x: panel.frame.minX, y: max(bounds.minY, top - panel.frame.height)))
+                guard let self, self.session.phase == phase, phase != .result else { return }
+                self.resizePanel(to: PanelSizing.defaultHeight)
             }
         }
+        overflowObservation = session.$resultOverflow
+            .removeDuplicates()
+            .sink { [weak self] overflow in
+                DispatchQueue.main.async { [weak self] in
+                    guard let self, self.session.phase == .result, let panel = self.panel else { return }
+                    let screen = (panel.screen ?? NSScreen.main)?.visibleFrame.height ?? 800
+                    let current = panel.contentRect(forFrameRect: panel.frame).height
+                    if let height = PanelSizing.fittedHeight(current: current, overflow: overflow, screenHeight: screen) {
+                        self.resizePanel(to: height)
+                    }
+                }
+            }
         let arguments = ProcessInfo.processInfo.arguments
         if arguments.contains("--cloud-smoke-test") {
             Task {
@@ -60,19 +71,23 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             NSApp.terminate(nil)
             return
         }
-        shortcuts.onAction = { [weak self] in self?.showAssistant($0) }
+        shortcuts.onShortcut = { [weak self] kind in
+            guard let self else { return }
+            if let action = kind.action { self.showAssistant(action) } else { self.readAloud() }
+        }
         item = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
         item.button?.image = NSImage(systemSymbolName: "text.badge.checkmark", accessibilityDescription: "English Compass")
         let menu = NSMenu()
         add("Write in English", action: #selector(write), to: menu)
         add("Understand English", action: #selector(understand), to: menu)
+        add("Read Selection Aloud", action: #selector(readAloudMenu), to: menu)
         add("Manual input...", action: #selector(manual), to: menu)
         menu.addItem(.separator())
         add("Settings...", action: #selector(settings), to: menu)
         menu.addItem(.separator())
         add("Quit English Compass", action: #selector(quit), to: menu)
         item.menu = menu
-        do { try shortcuts.register(write: preferences.writeShortcut, understand: preferences.understandShortcut) }
+        do { try shortcuts.register(preferences.allShortcuts) }
         catch { Diagnostics.event("shortcut_conflict") }
         Diagnostics.event("app_started")
         if ProcessInfo.processInfo.arguments.contains("--ui-test") { showAssistant(.writeEnglish, capture: false) }
@@ -85,12 +100,36 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     @objc private func write() { showAssistant(.writeEnglish) }
     @objc private func understand() { showAssistant(.understandEnglish) }
     @objc private func manual() { showAssistant(.writeEnglish, capture: false) }
+    @objc private func readAloudMenu() { readAloud() }
     @objc private func settings() { showSettings() }
     @objc private func quit() { NSApp.terminate(nil) }
 
+    /// Global Read Aloud: speaks the current selection without opening the panel.
+    /// Pressing it again while speaking stops playback.
+    private func readAloud() {
+        if speech.isSpeaking { speech.stop(); return }
+        // While the assistant panel is frontmost, read what it shows instead.
+        if panel?.isKeyWindow == true, let text = session.speechText { speech.speak(text); return }
+        readAloudTask?.cancel()
+        readAloudTask = Task { [weak self] in
+            guard let self else { return }
+            do {
+                let text = try await self.accessibility.readSelection()
+                guard !Task.isCancelled else { return }
+                self.speech.speak(text)
+            } catch {
+                Diagnostics.event("speech_no_selection")
+                if (error as? AssistantFailure) == .permission { self.showSettings() } else { NSSound.beep() }
+            }
+        }
+    }
+
     private func showAssistant(_ action: AssistantAction, capture: Bool = true) {
         session.begin(action, capture: capture) { [weak self] anchor in
-            self?.presentAssistant(anchor: anchor)
+            guard let self else { return }
+            // Resolve any Keychain prompt before the panel exists on screen.
+            if !self.session.isUITest { self.inference.prepareCredential() }
+            self.presentAssistant(anchor: anchor)
         }
     }
 
@@ -102,7 +141,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             window.titleVisibility = .hidden; window.titlebarAppearsTransparent = true
             window.isFloatingPanel = true; window.level = .floating; window.isReleasedWhenClosed = false
             window.delegate = self
-            window.contentView = NSHostingView(rootView: ResultView(session: session))
+            window.isOpaque = false
+            window.backgroundColor = .clear
+            window.contentView = Self.glassBackground(for: NSHostingView(rootView: ResultView(session: session)))
             window.collectionBehavior = [.moveToActiveSpace, .fullScreenAuxiliary]
             panel = window
         }
@@ -120,6 +161,35 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         NSApp.activate(ignoringOtherApps: true)
         panel?.makeKeyAndOrderFront(nil)
     }
+    /// Resizes the panel keeping its top edge fixed, clamped to the visible screen.
+    private func resizePanel(to height: CGFloat) {
+        guard let panel else { return }
+        let bounds = (panel.screen ?? NSScreen.main)?.visibleFrame ?? panel.frame
+        let clamped = min(height, bounds.height - 40)
+        let top = panel.frame.maxY
+        panel.setContentSize(NSSize(width: PanelSizing.width, height: clamped))
+        panel.setFrameOrigin(NSPoint(x: panel.frame.minX, y: max(bounds.minY, top - panel.frame.height)))
+    }
+
+    /// Liquid Glass behind the assistant panel on macOS 26+, translucent material before that.
+    private static func glassBackground(for content: NSView) -> NSView {
+        content.autoresizingMask = [.width, .height]
+        if #available(macOS 26.0, *) {
+            let glass = NSGlassEffectView()
+            glass.style = .regular
+            glass.cornerRadius = 0
+            glass.contentView = content
+            return glass
+        }
+        let effect = NSVisualEffectView()
+        effect.material = .popover
+        effect.blendingMode = .behindWindow
+        effect.state = .active
+        content.frame = effect.bounds
+        effect.addSubview(content)
+        return effect
+    }
+
     private func showSettings() {
         if settingsWindow == nil {
             let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 820, height: 620),
@@ -127,22 +197,26 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             window.title = "English Compass Settings"; window.isReleasedWhenClosed = false
             window.contentView = NSHostingView(rootView: SettingsView(preferences: preferences, accessibility: accessibility,
                                                                      onShortcut: updateShortcut,
-                                                                     onKeySaved: inference.useSavedCredential))
+                                                                     onKeySaved: inference.useSavedCredential,
+                                                                     onOpenAction: { [weak self] action in
+                                                                         self?.showAssistant(action, capture: false)
+                                                                     },
+                                                                     speech: speech))
             window.center(); settingsWindow = window
         }
         NSApp.activate(ignoringOtherApps: true)
         settingsWindow?.makeKeyAndOrderFront(nil)
     }
-    private func updateShortcut(_ action: AssistantAction, _ shortcut: Shortcut) -> String? {
-        let oldWrite = preferences.writeShortcut, oldUnderstand = preferences.understandShortcut
-        let write = action == .writeEnglish ? shortcut : oldWrite
-        let understand = action == .understandEnglish ? shortcut : oldUnderstand
+    private func updateShortcut(_ kind: ShortcutKind, _ shortcut: Shortcut) -> String? {
+        let old = preferences.allShortcuts
+        var updated = old
+        updated[kind] = shortcut
         do {
-            try shortcuts.register(write: write, understand: understand)
-            preferences.writeShortcut = write; preferences.understandShortcut = understand
+            try shortcuts.register(updated)
+            preferences.setShortcuts(updated)
             return nil
         } catch {
-            try? shortcuts.register(write: oldWrite, understand: oldUnderstand)
+            try? shortcuts.register(old)
             return error.localizedDescription
         }
     }

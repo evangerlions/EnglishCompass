@@ -16,11 +16,13 @@ protocol InferencePerforming: AnyObject {
     var lastRawResponse: String? { get }
     func infer(text: String, action: AssistantAction, additionalInstructions: String) async throws -> ModelResult
     func cancel()
+    func prepareCredential()
 }
 
 extension InferencePerforming {
     var lastRawRequest: String? { nil }
     var lastRawResponse: String? { nil }
+    func prepareCredential() {}
 }
 
 @MainActor
@@ -53,6 +55,14 @@ final class InferenceService: InferencePerforming {
     func useSavedCredential(_ key: String) {
         cancel()
         cachedCredential = key.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+    /// Reads the Keychain key before the panel is shown. A Keychain password
+    /// prompt deactivates the app, and the floating panel hides on deactivation,
+    /// so the prompt must not appear while the user is working in the panel.
+    /// Failures are not cached; the request path reports them normally.
+    func prepareCredential() {
+        guard cachedCredential == nil else { return }
+        cachedCredential = try? credential()
     }
     func infer(text: String, action: AssistantAction, additionalInstructions: String) async throws -> ModelResult {
         try Task.checkCancellation()

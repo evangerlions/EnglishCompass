@@ -56,7 +56,7 @@ struct ResultView: View {
                 if session.action == .writeEnglish {
                     WritingResultsView(session: session)
                 } else {
-                    resultContent
+                    UnderstandingResultView(session: session)
                 }
             case .replaced:
                 Text("Draft replaced.").accessibilityIdentifier("replaced_state")
@@ -64,7 +64,7 @@ struct ResultView: View {
             }
             footer
         }.padding(20).frame(width: 540).frame(maxHeight: .infinity, alignment: .top)
-            .background(Color(nsColor: .windowBackgroundColor)).tint(accent)
+            .tint(accent)
             .sheet(isPresented: $showDebug) {
                 RequestDebugSheet(request: session.rawRequest, response: session.rawResponse)
             }

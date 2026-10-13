@@ -23,12 +23,9 @@ enum WritingMarkdownPayload {
         }
 
         for line in normalized.components(separatedBy: "\n") {
-            if line.hasPrefix("## ") {
+            if let heading = sectionHeading(line) {
                 commit()
-                let heading = String(line.dropFirst(3)).trimmingCharacters(in: .whitespaces)
-                guard sections.contains(heading) || heading == "Notes", bodies[heading] == nil else {
-                    throw AssistantFailure.invalidResult
-                }
+                guard bodies[heading] == nil else { throw AssistantFailure.invalidResult }
                 current = heading
             } else if current != nil {
                 lines.append(line)
@@ -38,7 +35,11 @@ enum WritingMarkdownPayload {
         }
         commit()
 
-        guard Set(bodies.keys) == Set(sections + ["Notes"]) else { throw AssistantFailure.invalidResult }
+        // Summary is requested by the prompt but optional here, so a response
+        // without it still shows the three answers instead of failing.
+        let keys = Set(bodies.keys)
+        let required = Set(sections + ["Notes"])
+        guard keys == required || keys == required.union(["Summary"]) else { throw AssistantFailure.invalidResult }
         let candidates = try sections.map { heading -> String in
             guard let markdown = bodies[heading], !markdown.isEmpty else { throw AssistantFailure.invalidResult }
             let plain = plainText(markdown)
@@ -46,17 +47,60 @@ enum WritingMarkdownPayload {
             return plain
         }
         let notes = bodies["Notes"] ?? ""
-        let explanations = notes.components(separatedBy: "\n").compactMap { line -> String? in
-            let trimmed = line.trimmingCharacters(in: .whitespaces)
-            guard trimmed.hasPrefix("- ") else { return nil }
-            let text = String(trimmed.dropFirst(2)).trimmingCharacters(in: .whitespaces)
-            return text.isEmpty ? nil : text
-        }
+        let explanations = notes.components(separatedBy: "\n").compactMap(bulletText).map(removingVersionLabel)
         guard explanations.count == 3 else { throw AssistantFailure.invalidResult }
 
         return try ModelResult(candidates: candidates, explanations: explanations,
-                               summary: "", highlights: [],
+                               summary: bodies["Summary"] ?? "", highlights: [],
                                markdownCandidates: sections.compactMap { bodies[$0] }).validated()
+    }
+
+    /// Drops a redundant leading version label such as `**General**:` or
+    /// `Conversational：`; each card already shows its own label.
+    static func removingVersionLabel(_ note: String) -> String {
+        let labels = sections + ["通用", "口语", "学术"]
+        var text = Substring(note)
+        for label in labels {
+            for prefix in ["**\(label)**", label] where text.lowercased().hasPrefix(prefix.lowercased()) {
+                let rest = text.dropFirst(prefix.count).drop(while: { $0 == " " })
+                if let first = rest.first, ":：-—".contains(first) {
+                    let value = rest.dropFirst().trimmingCharacters(in: .whitespaces)
+                    if !value.isEmpty { return value }
+                }
+                text = Substring(note)
+            }
+        }
+        return note
+    }
+
+    /// True when the content uses the fixed section headings, even if malformed.
+    /// Such content must never fall back to being shown as one plain-text answer.
+    static func looksSectioned(_ content: String) -> Bool {
+        content.replacingOccurrences(of: "\r\n", with: "\n")
+            .components(separatedBy: "\n").contains { sectionHeading($0) != nil }
+    }
+
+    /// Accepts `## General`, `### General`, and case variants of the four headings.
+    static func sectionHeading(_ line: String) -> String? {
+        let trimmed = line.trimmingCharacters(in: .whitespaces)
+        guard trimmed.hasPrefix("##") else { return nil }
+        let title = trimmed.drop(while: { $0 == "#" }).trimmingCharacters(in: .whitespaces)
+        return (sections + ["Notes", "Summary"]).first { $0.caseInsensitiveCompare(title) == .orderedSame }
+    }
+
+    /// Accepts `-`, `*`, `+`, `•` and `1.` / `1)` list markers.
+    static func bulletText(_ line: String) -> String? {
+        var text = Substring(line.trimmingCharacters(in: .whitespaces))
+        if let first = text.first, "-*+•".contains(first) {
+            text = text.dropFirst()
+        } else if let dot = text.firstIndex(where: { $0 == "." || $0 == ")" }),
+                  !text[..<dot].isEmpty, text[..<dot].allSatisfy(\.isNumber) {
+            text = text[text.index(after: dot)...]
+        } else {
+            return nil
+        }
+        let value = text.trimmingCharacters(in: .whitespaces)
+        return value.isEmpty ? nil : value
     }
 
     static func plainText(_ markdown: String) -> String {

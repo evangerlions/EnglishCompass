@@ -59,7 +59,15 @@ still fail validation. Answer cards use compact spacing with inline Copy control
 | Action | Shortcut | Behavior |
 |---|---|---|
 | Write in English | Control + Option + E | Correct English, translate Chinese, complete mixed-language text |
-| Understand English | Control + Option + C | Translate an explicit English selection to Chinese; copy-only |
+| Understand English | Control + Option + R | Translate an explicit English selection to Chinese; copy-only |
+| Read Aloud | Control + Option + S | Speak the selected English with an on-device macOS voice; press again to stop |
+
+Inside the result panel, Space reads the highlighted answer (or the English
+source when translating), and each card has a speaker button. Speech runs
+entirely on this Mac; nothing extra is uploaded. Settings → Shortcuts chooses
+American or British English, the voice and the speed. Premium or Enhanced
+voices downloaded in System Settings → Accessibility → Spoken Content sound
+noticeably more natural.
 
 Manual paste is available from the menu. The app snapshots the original
 app/window/control and exact UTF-16 draft before showing its panel. Explicit

@@ -43,6 +43,10 @@ final class CloudAPIContractTests: XCTestCase {
         XCTAssertEqual(body["temperature"] as? Double, 0.1)
         XCTAssertEqual(body["max_tokens"] as? Int, 2048)
         XCTAssertEqual(body["response_format"] as? [String: String], ["type": "text"])
+        let understand = try CloudAPIContract.request(text: text, action: .understandEnglish,
+                                                      additionalInstructions: "", key: key)
+        let understandBody = try XCTUnwrap(JSONSerialization.jsonObject(with: XCTUnwrap(understand.httpBody)) as? [String: Any])
+        XCTAssertEqual(understandBody["response_format"] as? [String: String], ["type": "text"])
         let messages = try XCTUnwrap(body["messages"] as? [[String: String]])
         XCTAssertEqual(messages.count, 2)
         XCTAssertEqual(messages[0]["role"], "system")
@@ -62,11 +66,7 @@ final class CloudAPIContractTests: XCTestCase {
             let prompt = try XCTUnwrap(messages.first?["content"])
             XCTAssertTrue(prompt.hasSuffix(instructions))
             XCTAssertTrue(prompt.contains("only when compatible"))
-            if action == .writeEnglish {
-                XCTAssertTrue(prompt.contains("Return only Markdown"))
-            } else {
-                XCTAssertTrue(prompt.contains("Return only a JSON object"))
-            }
+            XCTAssertTrue(prompt.contains("Return only Markdown"))
             XCTAssertTrue(prompt.contains("Preserve negation"))
             XCTAssertFalse(prompt.contains("Protected terms:"))
             XCTAssertEqual(messages[1]["content"], "Synthetic input")
@@ -169,6 +169,9 @@ final class CloudAPIContractTests: XCTestCase {
         for content in ["not JSON", "{\"candidates\":[\"Hello\"", "```json\n{}\n```", "<think>private</think>{}"] {
             expectFailure(.invalidResult) { try CloudAPIContract.parse(data: self.completion(content: content), statusCode: 200) }
         }
+        let markdown = "## Translation\n你好\n\n## Notes\n- **Hello**：常见问候语。"
+        XCTAssertEqual(try CloudAPIContract.parse(data: completion(content: markdown), statusCode: 200,
+                                                  action: .understandEnglish).candidates, ["你好"])
         let ambiguous = "{\"candidates\":[\"one\",\"two\"],\"explanations\":[]}"
         XCTAssertEqual(try CloudAPIContract.parse(data: completion(content: ambiguous), statusCode: 200).candidates, ["one", "two"])
     }

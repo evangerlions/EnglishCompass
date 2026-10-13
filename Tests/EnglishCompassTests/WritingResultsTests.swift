@@ -46,4 +46,19 @@ final class WritingResultsTests: XCTestCase {
         session.moveCandidate(-1)
         XCTAssertEqual(session.candidateIndex, 2)
     }
+    @MainActor func testUnderstandingCopyUsesOnlyPlainTranslation() {
+        let session = AssistantSession(preferences: Preferences(), accessibility: AccessibilityBridge(),
+                                       inference: InferenceService())
+        session.action = .understandEnglish
+        session.result = ModelResult(candidates: ["医用与呼吸防护口罩"], summary: "- **Medical masks**：医用口罩。",
+                                     markdownCandidates: ["医用与**呼吸防护口罩**"])
+        session.phase = .result
+        session.chooseCandidate(0)
+        let board = NSPasteboard.withUniqueName()
+        defer { board.releaseGlobally() }
+        session.copy(to: board)
+        XCTAssertEqual(board.string(forType: .string), "医用与呼吸防护口罩")
+        XCTAssertFalse(board.string(forType: .string)?.contains("**") ?? true)
+        XCTAssertFalse(board.string(forType: .string)?.contains("Medical masks") ?? true)
+    }
 }

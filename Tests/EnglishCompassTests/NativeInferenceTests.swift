@@ -55,6 +55,27 @@ final class NativeInferenceTests: XCTestCase {
         XCTAssertEqual(reads, 1)
     }
 
+    @MainActor func testPreparedCredentialIsReusedByLaterRequests() async {
+        defer { clearStub() }
+        var reads = 0
+        let configuration = URLSessionConfiguration.ephemeral
+        configuration.protocolClasses = [StubURLProtocol.self]
+        let inference = InferenceService(session: URLSession(configuration: configuration),
+                                         credential: { reads += 1; return "synthetic-key" })
+        StubURLProtocol.handler = { request in
+            XCTAssertEqual(request.value(forHTTPHeaderField: "Authorization"), "Bearer synthetic-key")
+            return (401, Data())
+        }
+        inference.prepareCredential()
+        inference.prepareCredential()
+        XCTAssertEqual(reads, 1)
+        do {
+            _ = try await inference.infer(text: "Synthetic draft.", action: .writeEnglish, additionalInstructions: "")
+            XCTFail("Expected auth failure")
+        } catch { XCTAssertEqual(error as? AssistantFailure, .cloudAuth) }
+        XCTAssertEqual(reads, 1)
+    }
+
     @MainActor func testFailedKeychainReadIsNotCached() async {
         var reads = 0
         let inference = InferenceService(credential: {

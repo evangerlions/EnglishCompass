@@ -18,20 +18,36 @@ final class AssistantSession: ObservableObject {
     @Published private(set) var elapsedSeconds: TimeInterval?
     @Published private(set) var requestStartedAt: Date?
     @Published var sourceName = "Manual input"
+    /// Result scroll content height minus its visible height; drives panel fitting.
+    @Published var resultOverflow: CGFloat = 0
     let preferences: Preferences
     let accessibility: AccessibilityBridge
     let inference: any InferencePerforming
+    let speech: SpeechService
     private var target: CapturedTarget?
     private var task: Task<Void, Never>?
     private var requestID = UUID()
     var onClose: (() -> Void)?
     var onSettings: (() -> Void)?
 
-    init(preferences: Preferences, accessibility: AccessibilityBridge, inference: any InferencePerforming) {
+    init(preferences: Preferences, accessibility: AccessibilityBridge, inference: any InferencePerforming,
+         speech: SpeechService? = nil) {
         self.preferences = preferences; self.accessibility = accessibility; self.inference = inference
+        self.speech = speech ?? SpeechService(preferences: preferences)
     }
     var isUITest: Bool { ProcessInfo.processInfo.arguments.contains("--ui-test") }
     var hasCapturedTarget: Bool { target != nil }
+    /// English text worth reading aloud in the current state: the highlighted
+    /// answer for Write in English, the English source for Understand English.
+    var speechText: String? {
+        guard phase == .result else { return nil }
+        let text = action == .writeEnglish ? suggestion : input
+        return text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? nil : text
+    }
+    func speakCurrent() {
+        guard let speechText else { return }
+        speech.toggle(speechText)
+    }
     var canReplace: Bool {
         action == .writeEnglish && phase == .result && candidateIndex != nil && warnings.isEmpty &&
         !suggestion.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty &&
@@ -91,7 +107,7 @@ final class AssistantSession: ObservableObject {
         phase = .processing; message = ""; result = nil; candidateIndex = nil; warnings = []; rawResponse = nil
         elapsedSeconds = nil; requestStartedAt = Date()
         let id = UUID(); requestID = id
-        let text = input, action = action, additionalInstructions = preferences.additionalInstructions
+        let text = input, action = action, additionalInstructions = preferences.instructions(for: action)
         Diagnostics.event("inference_started", action: action.rawValue, mode: "non-thinking")
         task = Task { [weak self] in
             guard let self else { return }
@@ -112,6 +128,7 @@ final class AssistantSession: ObservableObject {
                 requestStartedAt = nil
                 self.rawRequest = inference.lastRawRequest
                 self.rawResponse = inference.lastRawResponse
+                self.resultOverflow = 0
                 self.result = result
                 if action == .writeEnglish || result.candidates.count == 1 { chooseCandidate(0) }
                 phase = .result
@@ -173,6 +190,7 @@ final class AssistantSession: ObservableObject {
     }
     func cancel(close: Bool = true) {
         requestID = UUID(); task?.cancel(); task = nil
+        if close { speech.stop() }
         if phase == .processing { inference.cancel() }
         if phase == .processing { Diagnostics.event("inference_cancelled", action: action.rawValue) }
         phase = .input

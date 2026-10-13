@@ -101,7 +101,7 @@ final class SessionCancellationTests: XCTestCase {
         defer { defaults.removePersistentDomain(forName: name) }
         fake.failure = .cloudUnavailable
         let session = subject(defaults, fake)
-        session.preferences.additionalInstructions = "Use concise English."
+        session.preferences.writeInstructions = "Use concise English."
         session.input = "Synthetic draft."
         session.process()
         try await Task.sleep(nanoseconds: 20_000_000)
@@ -123,11 +123,99 @@ final class SessionCancellationTests: XCTestCase {
         let shortcut = Shortcut(keyCode: 1, modifiers: 6144, label: "Synthetic shortcut")
         defaults.set(try JSONEncoder().encode(shortcut), forKey: "writeShortcut")
         let preferences = Preferences(defaults: defaults)
-        XCTAssertEqual(preferences.additionalInstructions, "Keep these terms unchanged: SyntheticTerm")
+        XCTAssertEqual(preferences.writeInstructions, "Keep these terms unchanged: SyntheticTerm")
+        XCTAssertEqual(preferences.understandInstructions, "Keep these terms unchanged: SyntheticTerm")
         XCTAssertNil(defaults.object(forKey: "terms"))
-        preferences.additionalInstructions = "Use concise English.\nKeep a friendly tone."
-        XCTAssertEqual(Preferences(defaults: defaults).additionalInstructions, preferences.additionalInstructions)
+        preferences.writeInstructions = "Use concise English.\nKeep a friendly tone."
+        preferences.understandInstructions = "Explain terms in Chinese."
+        let reloaded = Preferences(defaults: defaults)
+        XCTAssertEqual(reloaded.writeInstructions, preferences.writeInstructions)
+        XCTAssertEqual(reloaded.understandInstructions, preferences.understandInstructions)
+        XCTAssertNotEqual(reloaded.writeInstructions, reloaded.understandInstructions)
         XCTAssertEqual(preferences.writeShortcut, shortcut)
         for key in ["provider", "writeMode", "understandMode"] { XCTAssertNil(defaults.object(forKey: key)) }
+    }
+    @MainActor func testLegacySharedInstructionsMigrateToBothActionsOnce() {
+        let name = "EnglishCompassTests.\(UUID().uuidString)"
+        let defaults = UserDefaults(suiteName: name)!
+        defer { defaults.removePersistentDomain(forName: name) }
+        defaults.set("Legacy shared preference", forKey: "additionalInstructions")
+        let migrated = Preferences(defaults: defaults)
+        XCTAssertEqual(migrated.writeInstructions, "Legacy shared preference")
+        XCTAssertEqual(migrated.understandInstructions, "Legacy shared preference")
+        XCTAssertNil(defaults.object(forKey: "additionalInstructions"))
+        migrated.writeInstructions = "Write only"
+        let reloaded = Preferences(defaults: defaults)
+        XCTAssertEqual(reloaded.writeInstructions, "Write only")
+        XCTAssertEqual(reloaded.understandInstructions, "Legacy shared preference")
+    }
+    @MainActor func testEachActionUsesOnlyItsOwnInstructions() async throws {
+        let name = "EnglishCompassTests.\(UUID().uuidString)", fake = FakeInference()
+        let defaults = UserDefaults(suiteName: name)!
+        defer { defaults.removePersistentDomain(forName: name) }
+        let session = subject(defaults, fake)
+        session.preferences.writeInstructions = "Write-specific preference"
+        session.preferences.understandInstructions = "Understand-specific preference"
+        session.action = .understandEnglish
+        session.input = "Synthetic text"
+        session.process()
+        for _ in 0..<100 where fake.requests == 0 { await Task.yield() }
+        XCTAssertEqual(fake.receivedInstructions, "Understand-specific preference")
+        session.cancel(close: false)
+        session.action = .writeEnglish
+        session.input = "Synthetic text"
+        session.process()
+        for _ in 0..<100 where fake.requests < 2 { await Task.yield() }
+        XCTAssertEqual(fake.receivedInstructions, "Write-specific preference")
+    }
+    @MainActor func testUnderstandShortcutDefaultsToRAndMigratesOldDefaultOnly() throws {
+        let name = "EnglishCompassTests.\(UUID().uuidString)"
+        let defaults = UserDefaults(suiteName: name)!
+        defer { defaults.removePersistentDomain(forName: name) }
+        XCTAssertEqual(Preferences(defaults: defaults).understandShortcut, .understand)
+        XCTAssertEqual(Shortcut.understand.keyCode, 15)
+        defaults.set(try JSONEncoder().encode(Shortcut.legacyUnderstand), forKey: "understandShortcut")
+        XCTAssertEqual(Preferences(defaults: defaults).understandShortcut, .understand)
+        let custom = Shortcut(keyCode: 2, modifiers: 6144, label: "Control + Option + D")
+        defaults.set(try JSONEncoder().encode(custom), forKey: "understandShortcut")
+        XCTAssertEqual(Preferences(defaults: defaults).understandShortcut, custom)
+    }
+    @MainActor func testSpeechPreferencesDefaultPersistAndClamp() {
+        let name = "EnglishCompassTests.\(UUID().uuidString)"
+        let defaults = UserDefaults(suiteName: name)!
+        defer { defaults.removePersistentDomain(forName: name) }
+        let fresh = Preferences(defaults: defaults)
+        XCTAssertEqual(fresh.speakShortcut, .speak)
+        XCTAssertEqual(fresh.speechAccent, "en-US")
+        XCTAssertEqual(fresh.speechVoice, "")
+        XCTAssertEqual(fresh.speechRate, Preferences.defaultSpeechRate)
+        fresh.speechAccent = "en-GB"; fresh.speechRate = 0.55
+        let reloaded = Preferences(defaults: defaults)
+        XCTAssertEqual(reloaded.speechAccent, "en-GB")
+        XCTAssertEqual(reloaded.speechRate, 0.55, accuracy: 0.0001)
+        defaults.set(5.0, forKey: "speechRate"); defaults.set("fr-FR", forKey: "speechAccent")
+        let sanitized = Preferences(defaults: defaults)
+        XCTAssertEqual(sanitized.speechRate, 0.60, accuracy: 0.0001)
+        XCTAssertEqual(sanitized.speechAccent, "en-US")
+    }
+    @MainActor func testDefaultShortcutsAreDistinctAndConflictsAreRejected() throws {
+        let defaultsSet = ShortcutKind.allCases.map(\.defaultShortcut)
+        XCTAssertEqual(Set(defaultsSet.map { "\($0.keyCode)-\($0.modifiers)" }).count, ShortcutKind.allCases.count)
+        let shortcuts = GlobalShortcuts()
+        XCTAssertThrowsError(try shortcuts.register([.write: .write, .understand: .understand, .speak: .write]))
+    }
+    @MainActor func testSpeechTextFollowsActionAndPhase() {
+        let name = "EnglishCompassTests.\(UUID().uuidString)", fake = FakeInference()
+        let defaults = UserDefaults(suiteName: name)!
+        defer { defaults.removePersistentDomain(forName: name) }
+        let session = subject(defaults, fake)
+        session.input = "Synthetic source."
+        XCTAssertNil(session.speechText, "Nothing to read before a result exists")
+        session.result = ModelResult(candidates: ["First answer.", "Second answer.", "Third answer."])
+        session.phase = .result
+        session.chooseCandidate(1)
+        XCTAssertEqual(session.speechText, "Second answer.")
+        session.action = .understandEnglish
+        XCTAssertEqual(session.speechText, "Synthetic source.")
     }
 }
