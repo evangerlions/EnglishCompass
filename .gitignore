@@ -5,3 +5,10 @@ artifacts/
 __pycache__/
 .DS_Store
 .creative-design/
+*.p12
+*.pfx
+*.key
+*.mobileprovision
+*.provisionprofile
+.env
+.env.*

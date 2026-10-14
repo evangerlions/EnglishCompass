@@ -1,0 +1,4 @@
+Edited with the built-in Image Gen tool; transparent_background=true.
+Reference: AppIcon-imagegen-v1.png.
+
+Edit this English Compass macOS app icon. Change only the color palette and lighting/material weight. Preserve the exact speech-bubble-and-compass emblem, its geometry, position, scale, rounded-square silhouette and transparent exterior margin. Make the whole icon significantly brighter, fresh, youthful and contemporary: replace the dark muted teal tile with vivid luminous azure-cyan, predominantly #22B8F0 with a gentle lighter aqua highlight #63DCEB, no dark forest-green or muddy teal areas. Replace the warm cream emblem with clean bright white. Reduce the deep shadows and heavy ceramic embossing to a light softly dimensional finish, not metallic and not glossy. Maintain strong white-on-blue contrast and small-size legibility. No new elements, no lettering, no watermark, no mockup. Preserve genuine transparent pixels outside the rounded tile.

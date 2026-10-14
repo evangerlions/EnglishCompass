@@ -4,8 +4,21 @@ A native macOS cross-app English assistant using SwiftUI/AppKit, Accessibility
 and direct HTTPS to Alibaba Cloud Bailian.
 
 Planned improvements: [TODO](TODO.md).
+GitHub tests and locally signed releases: [GitHub Build](docs/GITHUB_BUILD.md).
 
 ## Run
+
+### Drag-to-Install DMG
+
+After building, run `bash Scripts/package-dmg.sh /absolute/path/EnglishCompass.dmg`.
+Requires `uv`; the script uses pinned `dmgbuild` to write Finder layout metadata
+without GUI automation. The installer has a fixed window, real draggable icons,
+an arrow and installation instructions. `SIGNING_IDENTITY` selects an existing
+Keychain signing identity; default is ad-hoc. `APPLICATIONS_TARGET` optionally
+selects a user-local Applications folder. Packaging does not export certificates
+or upload anything. Signing with Apple Development does not provide notarization.
+
+### Local Build
 
 Requires macOS 14+ and Xcode command-line tools to build.
 

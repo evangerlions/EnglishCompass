@@ -8,6 +8,10 @@ APP="$ROOT/dist/English Compass.app"
 mkdir -p "$APP/Contents/MacOS"
 cp "$BIN/EnglishCompass" "$APP/Contents/MacOS/EnglishCompass"
 cp "$ROOT/Resources/Info.plist" "$APP/Contents/Info.plist"
+mkdir -p "$APP/Contents/Resources"
+ICONSET=$(mktemp -d)/AppIcon.iconset
+swift "$ROOT/Scripts/app-icon.swift" "$ICONSET"
+iconutil -c icns "$ICONSET" -o "$APP/Contents/Resources/AppIcon.icns"
 for directory in "$APP/Contents/Resources/Backend" "$APP/Contents/Resources/Scripts"; do
     if [ -e "$directory" ] || [ -L "$directory" ]; then find "$directory" -depth -delete; fi
 done

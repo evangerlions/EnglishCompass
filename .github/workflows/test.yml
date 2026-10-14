@@ -1,0 +1,34 @@
+name: Test
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: test-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    runs-on: macos-26
+    timeout-minutes: 20
+    steps:
+      - name: Checkout
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+      - name: Test
+        run: swift test
+      - name: Build app
+        run: bash Scripts/build-app.sh
+      - name: Synthetic session smoke test
+        run: |
+          "dist/English Compass.app/Contents/MacOS/EnglishCompass" --ui-test --self-test > "$RUNNER_TEMP/session-smoke.log"
+          cat "$RUNNER_TEMP/session-smoke.log"
+          grep -q '^event=session_smoke_passed$' "$RUNNER_TEMP/session-smoke.log"
