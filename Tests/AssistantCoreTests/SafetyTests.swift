@@ -59,9 +59,17 @@ final class SafetyTests: XCTestCase {
         let snapshot = try DraftSnapshot(fullText: "\u{00e9}X", range: NSRange(location: 1, length: 1))
         XCTAssertThrowsError(try snapshot.replacing(with: "Y", current: "e\u{0301}X"))
     }
-    func testMarkdownAndNewlinesCannotChange() {
-        XCTAssertFalse(ProtectionRules.check(source: "# Title\n- item", candidate: "Title\nitem", terms: []).canReplace)
-        XCTAssertFalse(ProtectionRules.check(source: "one\ntwo", candidate: "one two", terms: []).canReplace)
+    func testLineBreakAndMarkdownChangesNoLongerBlockReplacement() {
+        // Rewording often changes line breaks; that alone is not a safety issue.
+        XCTAssertTrue(ProtectionRules.check(source: "# Title\n- item", candidate: "Title\nitem", terms: []).canReplace)
+        XCTAssertTrue(ProtectionRules.check(source: "one\ntwo", candidate: "one two", terms: []).canReplace)
+        // Real protections still apply.
+        XCTAssertFalse(ProtectionRules.check(source: "one\nRun `rm -i`", candidate: "one Run `rm -rf`", terms: []).canReplace)
+    }
+    func testPlainTextKeepsLineBreaksAndStripsInlineMarkup() {
+        XCTAssertEqual(WritingMarkdownPayload.plainText("First **line**.\nSecond `code` line.\n\nNew paragraph."),
+                       "First line.\nSecond code line.\n\nNew paragraph.")
+        XCTAssertEqual(WritingMarkdownPayload.plainText("- item **one**\n- item two"), "- item one\n- item two")
     }
     func testResultContractRejectsReasoningAndMalformedCandidates() {
         XCTAssertThrowsError(try ModelResult(candidates: []).validated())

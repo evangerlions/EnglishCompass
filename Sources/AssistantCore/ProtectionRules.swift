@@ -30,11 +30,6 @@ public enum ProtectionRules {
            !containsChinese || !tokens(source.lowercased(), modal).isEmpty {
             warnings.append("Negation or modal wording changed. Check the meaning before copying.")
         }
-        // Full Markdown structural equivalence is deliberately conservative.
-        if source.components(separatedBy: "\n").count != candidate.components(separatedBy: "\n").count ||
-           markers(source) != markers(candidate) {
-            warnings.append("Line breaks or Markdown structure changed.")
-        }
         return ProtectionReport(warnings: warnings)
     }
 
@@ -46,13 +41,5 @@ public enum ProtectionRules {
     }
     private static func count(_ term: String, in text: String) -> Int {
         text.components(separatedBy: term).count - 1
-    }
-    private static func markers(_ text: String) -> [String] {
-        let regex = try! NSRegularExpression(pattern: #"^\s*(?:#{1,6}\s|[-*+]\s|\d+\.\s|>\s|```.*$)"#)
-        return text.components(separatedBy: "\n").map { line in
-            let ns = line as NSString
-            return regex.firstMatch(in: line, range: NSRange(location: 0, length: ns.length))
-                .map { ns.substring(with: $0.range) } ?? ""
-        }
     }
 }

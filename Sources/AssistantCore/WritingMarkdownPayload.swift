@@ -103,10 +103,13 @@ enum WritingMarkdownPayload {
         return value.isEmpty ? nil : value
     }
 
+    /// Strips inline markup (`**`, `` ` ``, links) for copy and replacement while
+    /// keeping line breaks, blank lines and list markers exactly as written.
+    /// `.full` would collapse paragraphs and lines into one run of text.
     static func plainText(_ markdown: String) -> String {
         do {
             let attributed = try AttributedString(markdown: markdown,
-                                                  options: .init(interpretedSyntax: .full))
+                                                  options: .init(interpretedSyntax: .inlineOnlyPreservingWhitespace))
             return String(attributed.characters).trimmingCharacters(in: .whitespacesAndNewlines)
         } catch {
             // A deterministic fallback for malformed inline Markdown. Structural

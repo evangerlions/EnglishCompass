@@ -84,7 +84,8 @@ noticeably more natural.
 
 Manual paste is available from the menu. The app snapshots the original
 app/window/control and exact UTF-16 draft before showing its panel. Explicit
-replacement revalidates that snapshot, protected tokens and Markdown structure.
+replacement revalidates that snapshot and protected tokens (code, links, paths,
+numbers and negation). Line breaks may change freely when wording is improved.
 It never presses Enter, submits a message or reads terminal history.
 
 Settings retains shortcuts, additional instructions, launch at login and diagnostics.
