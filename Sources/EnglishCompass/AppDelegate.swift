@@ -14,9 +14,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     private var item: NSStatusItem!
     private var panel: NSPanel?
     private var settingsWindow: NSWindow?
-    private var phaseObservation: AnyCancellable?
-    private var overflowObservation: AnyCancellable?
     private var readAloudTask: Task<Void, Never>?
+    private var fitter: PanelAutoFitter?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         NSApp.setActivationPolicy(.accessory)
@@ -25,26 +24,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                                    speech: speech)
         session.onClose = { [weak self] in self?.panel?.orderOut(nil) }
         session.onSettings = { [weak self] in self?.showSettings() }
-        phaseObservation = session.$phase.sink { [weak self] phase in
-            // Non-result states use a fixed height. Results start from it and are
-            // then fitted to their measured content by the overflow observer below.
-            DispatchQueue.main.async { [weak self] in
-                guard let self, self.session.phase == phase, phase != .result else { return }
-                self.resizePanel(to: PanelSizing.defaultHeight)
-            }
-        }
-        overflowObservation = session.$resultOverflow
-            .removeDuplicates()
-            .sink { [weak self] overflow in
-                DispatchQueue.main.async { [weak self] in
-                    guard let self, self.session.phase == .result, let panel = self.panel else { return }
-                    let screen = (panel.screen ?? NSScreen.main)?.visibleFrame.height ?? 800
-                    let current = panel.contentRect(forFrameRect: panel.frame).height
-                    if let height = PanelSizing.fittedHeight(current: current, overflow: overflow, screenHeight: screen) {
-                        self.resizePanel(to: height)
-                    }
-                }
-            }
         let arguments = ProcessInfo.processInfo.arguments
         if arguments.contains("--cloud-smoke-test") {
             Task {
@@ -143,9 +122,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             window.delegate = self
             window.isOpaque = false
             window.backgroundColor = .clear
-            window.contentView = Self.glassBackground(for: NSHostingView(rootView: ResultView(session: session)))
+            window.contentView = PanelGlass.make(content: NSHostingView(rootView: ResultView(session: session)))
             window.collectionBehavior = [.moveToActiveSpace, .fullScreenAuxiliary]
             panel = window
+            fitter = PanelAutoFitter(panel: window, session: session)
         }
         let screen = NSScreen.screens.first { screen in
             guard let anchor else { return screen == NSScreen.main }
@@ -169,25 +149,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         let top = panel.frame.maxY
         panel.setContentSize(NSSize(width: PanelSizing.width, height: clamped))
         panel.setFrameOrigin(NSPoint(x: panel.frame.minX, y: max(bounds.minY, top - panel.frame.height)))
-    }
-
-    /// Liquid Glass behind the assistant panel on macOS 26+, translucent material before that.
-    private static func glassBackground(for content: NSView) -> NSView {
-        content.autoresizingMask = [.width, .height]
-        if #available(macOS 26.0, *) {
-            let glass = NSGlassEffectView()
-            glass.style = .regular
-            glass.cornerRadius = 0
-            glass.contentView = content
-            return glass
-        }
-        let effect = NSVisualEffectView()
-        effect.material = .popover
-        effect.blendingMode = .behindWindow
-        effect.state = .active
-        content.frame = effect.bounds
-        effect.addSubview(content)
-        return effect
     }
 
     private func showSettings() {

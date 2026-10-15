@@ -41,7 +41,7 @@ final class CloudAPIContractTests: XCTestCase {
         XCTAssertEqual(body["enable_thinking"] as? Bool, false)
         XCTAssertEqual(body["stream"] as? Bool, false)
         XCTAssertEqual(body["temperature"] as? Double, 0.1)
-        XCTAssertEqual(body["max_tokens"] as? Int, 2048)
+        XCTAssertEqual(body["max_tokens"] as? Int, 4096)
         XCTAssertEqual(body["response_format"] as? [String: String], ["type": "text"])
         let understand = try CloudAPIContract.request(text: text, action: .understandEnglish,
                                                       additionalInstructions: "", key: key)
@@ -110,10 +110,10 @@ final class CloudAPIContractTests: XCTestCase {
         expectFailure(.invalidResult) { try CloudAPIContract.parse(data: error, statusCode: 200) }
     }
 
-    func testEnvelopeRejectsWrongModelIndexFinishAndToolCalls() throws {
-        for model in ["", "other-model", "qwen3.7-flash-snapshot"] {
-            expectFailure(.invalidResult) { try CloudAPIContract.parse(data: self.completion(model: model), statusCode: 200) }
-        }
+    func testEnvelopeRejectsIndexFinishAndToolCallsRegardlessOfEchoedModel() throws {
+        // The compatible endpoint may echo any model id (multi-model support),
+        // so a wrong/empty echoed model is NOT itself a rejection; index/finish
+        // and tool-call shape still are.
         for index: Any in [true, false, -1, 1, "0", NSNull()] {
             expectFailure(.invalidResult) { try CloudAPIContract.parse(data: self.completion(index: index), statusCode: 200) }
         }
@@ -174,5 +174,13 @@ final class CloudAPIContractTests: XCTestCase {
                                                   action: .understandEnglish).candidates, ["你好"])
         let ambiguous = "{\"candidates\":[\"one\",\"two\"],\"explanations\":[]}"
         XCTAssertEqual(try CloudAPIContract.parse(data: completion(content: ambiguous), statusCode: 200).candidates, ["one", "two"])
+    }
+
+    func testAcceptsAnyEchoedModelIdForMultiModelSupport() throws {
+        // Used for model benchmarking / future switching: the echo must not bind
+        // the response to the single hard-coded model.
+        for echoed in ["qwen3.6-flash", "deepseek-v4.1-flash", ""] {
+            XCTAssertNoThrow(try CloudAPIContract.parse(data: completion(model: echoed), statusCode: 200))
+        }
     }
 }

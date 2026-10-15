@@ -11,6 +11,16 @@ enum ApplicationMenus {
         appItem.submenu = app
         main.addItem(appItem)
 
+        let editItem = NSMenuItem(title: "Edit", action: nil, keyEquivalent: "")
+        editItem.submenu = editMenu()
+        main.addItem(editItem)
+        return main
+    }
+
+    /// Standard Edit menu. Nil targets route editing commands to the focused
+    /// responder. Shared by the installed app and Lab so editing shortcuts
+    /// (⌘X/⌘C/⌘V/⌘A/⌘Z) work identically in both.
+    static func editMenu() -> NSMenu {
         let edit = NSMenu(title: "Edit")
         edit.addItem(withTitle: "Undo", action: Selector(("undo:")), keyEquivalent: "z")
         let redo = edit.addItem(withTitle: "Redo", action: Selector(("redo:")), keyEquivalent: "z")
@@ -20,9 +30,6 @@ enum ApplicationMenus {
         edit.addItem(withTitle: "Copy", action: #selector(NSText.copy(_:)), keyEquivalent: "c")
         edit.addItem(withTitle: "Paste", action: #selector(NSText.paste(_:)), keyEquivalent: "v")
         edit.addItem(withTitle: "Select All", action: #selector(NSText.selectAll(_:)), keyEquivalent: "a")
-        let editItem = NSMenuItem(title: "Edit", action: nil, keyEquivalent: "")
-        editItem.submenu = edit
-        main.addItem(editItem)
-        return main
+        return edit
     }
 }

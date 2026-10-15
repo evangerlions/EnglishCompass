@@ -14,7 +14,12 @@ final class CloudSessionDelegate: NSObject, URLSessionTaskDelegate {
 protocol InferencePerforming: AnyObject {
     var lastRawRequest: String? { get }
     var lastRawResponse: String? { get }
+    /// Real cloud transport streams. Test doubles default to false and use the
+    /// non-stream `infer` path that returns an already-parsed ModelResult.
+    var usesStreaming: Bool { get }
     func infer(text: String, action: AssistantAction, additionalInstructions: String) async throws -> ModelResult
+    func inferStream(text: String, action: AssistantAction, additionalInstructions: String,
+                     onDelta: @escaping @MainActor (String) -> Void) async throws -> String
     func cancel()
     func prepareCredential()
 }
@@ -22,16 +27,23 @@ protocol InferencePerforming: AnyObject {
 extension InferencePerforming {
     var lastRawRequest: String? { nil }
     var lastRawResponse: String? { nil }
+    var usesStreaming: Bool { false }
+    func inferStream(text: String, action: AssistantAction, additionalInstructions: String,
+                     onDelta: @escaping @MainActor (String) -> Void) async throws -> String {
+        throw AssistantFailure.cloudUnavailable
+    }
     func prepareCredential() {}
 }
 
 @MainActor
 final class InferenceService: InferencePerforming {
+    let usesStreaming = true
     private let session: URLSession
     private let credential: () throws -> String
     // Process-local only: never persist or log this copy of the Keychain secret.
     private var cachedCredential: String?
     private var active: Task<ModelResult, Error>?
+    private var activeStream: Task<String, Error>?
     private var operationID: UUID?
     private(set) var lastRawRequest: String?
     private(set) var lastRawResponse: String?
@@ -51,6 +63,8 @@ final class InferenceService: InferencePerforming {
         operationID = nil
         active?.cancel()
         active = nil
+        activeStream?.cancel()
+        activeStream = nil
     }
     func useSavedCredential(_ key: String) {
         cancel()
@@ -121,6 +135,98 @@ final class InferenceService: InferencePerforming {
             if let failure = error as? AssistantFailure { throw failure }
             if (error as? URLError)?.code == .timedOut { throw AssistantFailure.timedOut }
             // Never expose provider response bodies, drafts or credential-bearing errors.
+            throw AssistantFailure.cloudUnavailable
+        }
+    }
+
+    func inferStream(text: String, action: AssistantAction, additionalInstructions: String,
+                     onDelta: @escaping @MainActor (String) -> Void) async throws -> String {
+        try Task.checkCancellation()
+        guard operationID == nil else { throw AssistantFailure.cloudUnavailable }
+        try CloudAPIContract.validateInput(text)
+        let key = try cachedCredential ?? credential()
+        let request = try CloudAPIContract.request(text: text, action: action,
+                                                   additionalInstructions: additionalInstructions,
+                                                   key: key, stream: true)
+        lastRawRequest = request.httpBody.flatMap { String(data: $0, encoding: .utf8) }
+        lastRawResponse = nil
+        cachedCredential = key
+        let id = UUID()
+        operationID = id
+        Diagnostics.event("cloud_request_started", action: action.rawValue, mode: "stream")
+
+        let task = Task { [session] () -> String in
+            let (bytes, response) = try await session.bytes(for: request)
+            defer { bytes.task.cancel() }
+            try Task.checkCancellation()
+            guard let http = response as? HTTPURLResponse else { throw AssistantFailure.cloudUnavailable }
+            // Surface provider HTTP errors with the same mapping as non-stream.
+            switch http.statusCode {
+            case 200: break
+            case 401, 403: throw AssistantFailure.cloudAuth
+            case 429: throw AssistantFailure.cloudRateLimit
+            default: throw AssistantFailure.cloudUnavailable
+            }
+
+            var accumulator = ""
+            var lineBuffer = Data()
+            func handleLine() async {
+                defer { lineBuffer.removeAll(keepingCapacity: true) }
+                guard lineBuffer.starts(with: Data("data:".utf8)) else { return }
+                var payload = lineBuffer.dropFirst(5)
+                while let first = payload.first, first == 0x20 || first == 0x09 || first == 0x0D {
+                    payload = payload.dropFirst()
+                }
+                guard !payload.isEmpty, payload != Data("[DONE]".utf8) else { return }
+                let payloadData = Data(payload)
+                guard let obj = try? JSONSerialization.jsonObject(with: payloadData) as? [String: Any],
+                      let choices = obj["choices"] as? [[String: Any]] else { return }
+                // Content may arrive as a streaming delta; some providers also
+                // echo a complete message. Accept both.
+                var piece: String?
+                if let delta = choices.first?["delta"] as? [String: Any] {
+                    piece = delta["content"] as? String
+                } else if let message = choices.first?["message"] as? [String: Any] {
+                    piece = message["content"] as? String
+                }
+                if let piece, !piece.isEmpty {
+                    accumulator += piece
+                    let snapshot = piece
+                    await MainActor.run { onDelta(snapshot) }
+                }
+            }
+            for try await byte in bytes {
+                try Task.checkCancellation()
+                guard accumulator.utf8.count < 200_000 else { throw AssistantFailure.invalidResult }
+                if byte == 0x0A {
+                    await handleLine()
+                } else {
+                    lineBuffer.append(byte)
+                }
+            }
+            await handleLine()
+            await MainActor.run { self.lastRawResponse = accumulator }
+            return accumulator
+        }
+
+        activeStream = task
+        defer { if operationID == id { activeStream = nil; operationID = nil } }
+        do {
+            let content = try await withTaskCancellationHandler {
+                try await task.value
+            } onCancel: { task.cancel() }
+            try Task.checkCancellation()
+            guard operationID == id else { throw AssistantFailure.cancelled }
+            Diagnostics.event("cloud_request_success", action: action.rawValue, mode: "stream")
+            return content
+        } catch {
+            if Task.isCancelled || operationID != id || (error as? URLError)?.code == .cancelled || error is CancellationError {
+                Diagnostics.event("cloud_request_cancelled", action: action.rawValue)
+                throw AssistantFailure.cancelled
+            }
+            Diagnostics.event("cloud_request_failed", action: action.rawValue)
+            if let failure = error as? AssistantFailure { throw failure }
+            if (error as? URLError)?.code == .timedOut { throw AssistantFailure.timedOut }
             throw AssistantFailure.cloudUnavailable
         }
     }

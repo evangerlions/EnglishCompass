@@ -112,3 +112,24 @@ explicit live XCTest can use a temporary `ENGLISHCOMPASS_TEST_KEY`; it does not
 prove Keychain access. Normal tests skip that live test when no key is supplied.
 `--ui-test` is a labelled fixture, not real inference or cross-app E2E evidence.
 See `docs/VALIDATION.md` for current evidence and remaining acceptance blockers.
+
+## Local Lab mode
+
+For prompt and UI work without touching the installed app:
+
+```bash
+./Scripts/run-lab.sh
+# or: swift run EnglishCompass --lab --disable-sandbox
+```
+
+Lab mode opens the production assistant panel itself (same glass, same cards
+and the same adaptive height) with only a `LAB` badge added, so UI work looks
+exactly like the installed app. A separate inspector window holds the system
+prompt, editable Lab-only additional instructions, and the raw request and
+response; open it from the magnifying-glass icon or the Debug menu. The File
+menu switches between Write and Understand and runs the current request.
+
+It does not register hot keys, show a status item, use Accessibility, or read
+Keychain. The API key is read only from the `BAILIAN_API_KEY` environment
+variable (export it in `~/.zshrc`), and Lab settings are stored in a separate
+`com.zook.EnglishCompass.lab` defaults suite.

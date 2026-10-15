@@ -8,6 +8,7 @@ let package = Package(
     targets: [
         .target(name: "AssistantCore"),
         .executableTarget(name: "EnglishCompass", dependencies: ["AssistantCore"]),
+        .executableTarget(name: "ECBench", dependencies: ["AssistantCore"]),
         .testTarget(name: "AssistantCoreTests", dependencies: ["AssistantCore"]),
         .testTarget(name: "EnglishCompassTests", dependencies: ["EnglishCompass"])
     ],

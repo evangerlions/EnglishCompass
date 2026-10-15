@@ -5,16 +5,33 @@ enum PanelSizing {
     static let width: CGFloat = 540
     static let minResultHeight: CGFloat = 220
     static let maxResultHeight: CGFloat = 660
-    /// Height used for input, processing and error states.
-    static let defaultHeight: CGFloat = 470
+    /// Input editor: compact when empty, grows with what is typed, then scrolls.
+    static let minInputHeight: CGFloat = 240
+    static let maxInputHeight: CGFloat = 560
+    /// Height used for processing and replaced states (no measured content).
+    static let defaultHeight: CGFloat = 360
+    /// Ignore sub-pixel layout churn so a stable layout settles immediately.
+    private static let tolerance: CGFloat = 4
 
-    /// `overflow` is scroll content height minus visible scroll height: positive
-    /// means content is hidden, negative means there is empty space to remove.
-    /// Returns nil when the change is too small to be worth a resize.
-    static func fittedHeight(current: CGFloat, overflow: CGFloat, screenHeight: CGFloat) -> CGFloat? {
-        let maximum = max(minResultHeight, min(maxResultHeight, screenHeight - 40))
-        let target = min(max(current + overflow, minResultHeight), maximum).rounded()
-        return abs(target - current) > 1 ? target : nil
+    /// Desired panel height from measured scroll content and the fixed chrome
+    /// measured at the current height (panel height minus the scroll viewport).
+    /// Because chrome is measured, not guessed, resizing converges: the new
+    /// viewport equals the content and the next target is the same height.
+    static func height(scrollContent: CGFloat, chrome: CGFloat, screenHeight: CGFloat,
+                       minHeight: CGFloat = minResultHeight, maxHeight: CGFloat = maxResultHeight) -> CGFloat {
+        let maximum = max(minHeight, min(maxHeight, screenHeight - 40))
+        return min(max(scrollContent + chrome, minHeight), maximum).rounded()
+    }
+
+    /// True only when the new height differs by more than layout tolerance.
+    static func needsResize(from current: CGFloat, to target: CGFloat) -> Bool {
+        abs(target - current) > tolerance
+    }
+
+    /// Fixed chrome at the current height. The scroll viewport is measured for
+    /// that exact height, so their difference is the header/buttons/padding.
+    static func chrome(panelHeight: CGFloat, viewport: CGFloat) -> CGFloat {
+        max(0, panelHeight - viewport)
     }
 }
 
@@ -26,14 +43,5 @@ extension View {
                 .onAppear { action(proxy.size.height) }
                 .onChange(of: proxy.size.height) { _, height in action(height) }
         })
-    }
-
-    /// Measures a scroll view's content against its visible height and reports
-    /// the difference to the session so the panel can fit its content.
-    func reportsScrollOverflow(content: CGFloat, viewport: CGFloat, to session: AssistantSession) -> some View {
-        onChange(of: content - viewport, initial: true) { _, overflow in
-            guard content > 0, viewport > 0 else { return }
-            session.resultOverflow = overflow
-        }
     }
 }

@@ -10,6 +10,10 @@ enum PreviewRenderer {
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         session.begin(.writeEnglish, capture: false)
         try save(ResultView(session: session), size: NSSize(width: 540, height: 360), to: directory.appendingPathComponent("input-fixture.png"))
+        // Long single-line input must wrap within the editor, not scroll horizontally.
+        session.input = "This is a long sentence that should wrap onto multiple lines inside the fixed-width input editor instead of extending horizontally off the right edge of the box."
+        try save(ResultView(session: session), size: NSSize(width: 540, height: 360), to: directory.appendingPathComponent("input-wrap-fixture.png"))
+        session.input = ""
         session.phase = .processing
         try save(ResultView(session: session), size: NSSize(width: 540, height: 310), to: directory.appendingPathComponent("loading-fixture.png"))
         session.input = "Please helps me fix this bug."
@@ -43,8 +47,8 @@ enum PreviewRenderer {
                  to: directory.appendingPathComponent("settings-fixture.png"))
         session.cancel()
     }
-    /// Starts at the default height and applies PanelSizing to the measured
-    /// overflow until it settles, then saves and prints the final height.
+    /// Lays the result out at the height PanelAutoFitter would settle on, given
+    /// the content and viewport measured by the view.
     private static func saveFitted(_ session: AssistantSession, to url: URL) throws {
         let view = NSHostingView(rootView: ResultView(session: session))
         var height = PanelSizing.defaultHeight
@@ -55,11 +59,13 @@ enum PreviewRenderer {
             view.frame = NSRect(x: 0, y: 0, width: PanelSizing.width, height: height)
             view.layoutSubtreeIfNeeded()
             RunLoop.main.run(until: Date().addingTimeInterval(0.05))
-            guard let next = PanelSizing.fittedHeight(current: height, overflow: session.resultOverflow,
-                                                      screenHeight: 1000) else { break }
+            guard let measure = session.resultMeasure else { break }
+            let chrome = PanelSizing.chrome(panelHeight: height, viewport: measure.viewport)
+            let next = PanelSizing.height(scrollContent: measure.content, chrome: chrome, screenHeight: 1000)
+            guard PanelSizing.needsResize(from: height, to: next) else { break }
             height = next
         }
-        print("event=fitted_height file=\(url.lastPathComponent) height=\(Int(height)) overflow=\(Int(session.resultOverflow))")
+        print("event=fitted_height file=\(url.lastPathComponent) height=\(Int(height))")
         guard let bitmap = view.bitmapImageRepForCachingDisplay(in: view.bounds) else { throw CocoaError(.fileWriteUnknown) }
         view.cacheDisplay(in: view.bounds, to: bitmap)
         guard let data = bitmap.representation(using: .png, properties: [:]) else { throw CocoaError(.fileWriteUnknown) }

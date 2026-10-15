@@ -18,8 +18,21 @@ final class AssistantSession: ObservableObject {
     @Published private(set) var elapsedSeconds: TimeInterval?
     @Published private(set) var requestStartedAt: Date?
     @Published var sourceName = "Manual input"
-    /// Result scroll content height minus its visible height; drives panel fitting.
-    @Published var resultOverflow: CGFloat = 0
+    /// Measured scroll content and viewport of the current result view.
+    struct ResultMeasure: Equatable { var content: CGFloat; var viewport: CGFloat }
+    @Published var resultMeasure: ResultMeasure?
+    @Published var inputMeasure: ResultMeasure?
+    /// Partial Markdown while streaming; the result views render it live. Cleared
+    /// when the finished payload is strictly parsed into `result`.
+    @Published var streamingMarkdown: String?
+    func reportResultMeasure(content: CGFloat, viewport: CGFloat) {
+        let measure = ResultMeasure(content: content.rounded(), viewport: viewport.rounded())
+        if measure != resultMeasure { resultMeasure = measure }
+    }
+    func reportInputMeasure(content: CGFloat, viewport: CGFloat) {
+        let measure = ResultMeasure(content: content.rounded(), viewport: viewport.rounded())
+        if measure != inputMeasure { inputMeasure = measure }
+    }
     let preferences: Preferences
     let accessibility: AccessibilityBridge
     let inference: any InferencePerforming
@@ -44,6 +57,26 @@ final class AssistantSession: ObservableObject {
         let text = action == .writeEnglish ? suggestion : input
         return text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? nil : text
     }
+    var isStreaming: Bool { streamingMarkdown != nil }
+
+    /// Live per-section Markdown for the Write response while streaming.
+    /// Index order matches the three cards; nil means that card has not started.
+    var liveWriteSections: (cards: [String?], notes: String?, summary: String?) {
+        guard let md = streamingMarkdown else { return (Array(repeating: nil, count: 3), nil, nil) }
+        var s = StreamingSections()
+        s.ingest(md, known: StreamingSections.writeHeadings)
+        return ([s.displayOrNil("General"), s.displayOrNil("Conversational"), s.displayOrNil("Academic")],
+                s.displayOrNil("Notes"), s.displayOrNil("Summary"))
+    }
+
+    /// Live sections for the Understand response while streaming.
+    var liveUnderstandSections: (translation: String?, notes: String?) {
+        guard let md = streamingMarkdown else { return (nil, nil) }
+        var s = StreamingSections()
+        s.ingest(md, known: StreamingSections.understandHeadings)
+        return (s.displayOrNil("Translation"), s.displayOrNil("Notes"))
+    }
+
     func speakCurrent() {
         guard let speechText else { return }
         speech.toggle(speechText)
@@ -57,6 +90,7 @@ final class AssistantSession: ObservableObject {
         cancel(close: false)
         self.action = action
         phase = .input; input = ""; suggestion = ""; result = nil; candidateIndex = nil
+        resultMeasure = nil; inputMeasure = nil; streamingMarkdown = nil
         warnings = []; message = ""; target = nil; sourceName = "Manual input"; rawResponse = nil; rawRequest = nil
         guard capture else {
             completion(nil)
@@ -105,6 +139,7 @@ final class AssistantSession: ObservableObject {
             sourceName = "Manual input"
         }
         phase = .processing; message = ""; result = nil; candidateIndex = nil; warnings = []; rawResponse = nil
+        streamingMarkdown = ""
         elapsedSeconds = nil; requestStartedAt = Date()
         let id = UUID(); requestID = id
         let text = input, action = action, additionalInstructions = preferences.instructions(for: action)
@@ -120,19 +155,36 @@ final class AssistantSession: ObservableObject {
                     // Explicit UI fixture. Never reachable in a normal launch.
                     result = action == .writeEnglish ? WritingFixture.result : ModelResult(
                         candidates: ["请帮我修复这个问题。"], explanations: ["UI test fixture only; no model inference."])
+                } else if self.inference.usesStreaming {
+                    var buffer = ""
+                    let content = try await self.inference.inferStream(
+                        text: text, action: action, additionalInstructions: additionalInstructions
+                    ) { [weak self] delta in
+                        buffer += delta
+                        // Switch to the result surface immediately so the first
+                        // section can render while the rest keeps streaming.
+                        guard let self else { return }
+                        if self.phase == .processing { self.phase = .result }
+                        self.streamingMarkdown = buffer
+                    }
+                    // Streaming joined deltas are content only (no response
+                    // envelope); parse them with the content parser, which only
+                    // requires the three copy-ready answers.
+                    result = try CloudAPIContract.parseContent(content, action: action)
                 } else {
-                    result = try await inference.infer(text: text, action: action, additionalInstructions: additionalInstructions)
+                    result = try await self.inference.infer(text: text, action: action, additionalInstructions: additionalInstructions)
                 }
                 guard !Task.isCancelled, requestID == id else { return }
                 elapsedSeconds = Date().timeIntervalSince(requestStartedAt ?? started)
                 requestStartedAt = nil
                 self.rawRequest = inference.lastRawRequest
                 self.rawResponse = inference.lastRawResponse
-                self.resultOverflow = 0
+                self.resultMeasure = nil
+                self.streamingMarkdown = nil
                 self.result = result
                 if action == .writeEnglish || result.candidates.count == 1 { chooseCandidate(0) }
                 phase = .result
-                Diagnostics.event("inference_success", action: action.rawValue, mode: "non-thinking")
+                Diagnostics.event("inference_success", action: action.rawValue, mode: "stream")
                 Diagnostics.metrics(elapsed: Date().timeIntervalSince(started), characters: text.count)
             } catch {
                 guard !Task.isCancelled, requestID == id else { return }
@@ -141,6 +193,7 @@ final class AssistantSession: ObservableObject {
                 self.rawRequest = inference.lastRawRequest
                 self.rawResponse = inference.lastRawResponse
                 phase = .error
+                streamingMarkdown = nil
                 if let debug = error as? InvalidResultError {
                     message = debug.errorDescription ?? "Error."
                     rawResponse = debug.rawResponse

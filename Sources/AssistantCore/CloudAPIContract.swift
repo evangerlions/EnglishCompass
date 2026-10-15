@@ -12,6 +12,11 @@ public enum CloudAPIContract {
     }
 
     public static func request(text: String, action: AssistantAction, additionalInstructions: String, key: String) throws -> URLRequest {
+        try request(text: text, action: action, additionalInstructions: additionalInstructions, key: key, stream: false)
+    }
+
+    public static func request(text: String, action: AssistantAction, additionalInstructions: String, key: String,
+                               stream: Bool) throws -> URLRequest {
         try validateInput(text)
         let credential = key.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !credential.isEmpty else { throw AssistantFailure.cloudKeyMissing }
@@ -19,21 +24,25 @@ public enum CloudAPIContract {
               credential.unicodeScalars.allSatisfy({ (33...126).contains($0.value) }) else {
             throw AssistantFailure.cloudAuth
         }
-        let body: [String: Any] = [
+        var body: [String: Any] = [
             "model": model,
             "messages": [["role": "system", "content": try systemPrompt(action: action, additionalInstructions: additionalInstructions)],
                          ["role": "user", "content": text]],
             "enable_thinking": false,
             "temperature": 0.1,
-            "max_tokens": action == .writeEnglish ? 2048 : 512,
-            "response_format": ["type": "text"],
-            "stream": false
+            "max_tokens": action == .writeEnglish ? 4096 : 1024,
+            "stream": stream
         ]
+        if stream {
+            body["stream_options"] = ["include_usage": true]
+        } else {
+            body["response_format"] = ["type": "text"]
+        }
         var result = URLRequest(url: endpoint, cachePolicy: .reloadIgnoringLocalCacheData, timeoutInterval: 120)
         result.httpMethod = "POST"
         result.setValue("Bearer " + credential, forHTTPHeaderField: "Authorization")
         result.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        result.setValue("application/json", forHTTPHeaderField: "Accept")
+        result.setValue(stream ? "text/event-stream" : "application/json", forHTTPHeaderField: "Accept")
         result.httpBody = try jsonData(body)
         return result
     }
@@ -46,7 +55,6 @@ public enum CloudAPIContract {
         default: throw AssistantFailure.cloudUnavailable
         }
         guard let envelope = try jsonObject(data) as? [String: Any], envelope["error"] == nil,
-              envelope["model"] as? String == model,
               let choices = envelope["choices"] as? [[String: Any]], choices.count == 1,
               let index = choices[0]["index"] as? NSNumber,
               CFGetTypeID(index) != CFBooleanGetTypeID(), index.doubleValue == 0,
@@ -58,34 +66,35 @@ public enum CloudAPIContract {
         }
         if let function = message["function_call"], !(function is NSNull) { throw AssistantFailure.invalidResult }
         // reasoning_content is never read or returned; only final content is parsed.
+        if let action { return try parseContent(content, action: action) }
+        return try parseLegacyJSONContent(content)
+    }
+
+    /// Parses just the assistant message body (no response envelope). Used by the
+    /// streaming path, which accumulates content deltas rather than a full JSON
+    /// envelope. Requirements are intentionally narrow: for Write only the three
+    /// copy-ready answers must be present; explanatory prose is free-form body.
+    public static func parseContent(_ content: String, action: AssistantAction) throws -> ModelResult {
         if action == .writeEnglish {
             if let markdown = try? WritingMarkdownPayload.parse(content) { return markdown }
-            // Sectioned Markdown that failed strict parsing is malformed, not a
-            // single plain answer; fail closed so the raw response can be inspected.
             if WritingMarkdownPayload.looksSectioned(content) { throw AssistantFailure.invalidResult }
-            // Keep compatibility with older provider responses during rollout.
             return try WritingPayload.parse(content)
         }
-        if action == .understandEnglish {
-            if let markdown = try? UnderstandingMarkdownPayload.parse(content) { return markdown }
-            // Keep compatibility with older JSON responses during rollout.
-        }
+        if let markdown = try? UnderstandingMarkdownPayload.parse(content) { return markdown }
+        return try parseLegacyJSONContent(content)
+    }
+
+    /// Legacy JSON body shape shared by the no-action envelope path and the
+    /// Understand compatibility path. Unknown keys and malformed entry types fail.
+    private static func parseLegacyJSONContent(_ content: String) throws -> ModelResult {
         guard let value = try jsonObject(Data(content.utf8)) as? [String: Any],
               let candidates = value["candidates"] as? [String],
               let explanations = value["explanations"] as? [String],
-              (candidates + explanations).allSatisfy({ !$0.contains("<think") && !$0.contains("</think") }) else {
+              Set(value.keys).isSubset(of: ["candidates", "explanations", "summary", "highlights"]),
+              (1...2).contains(candidates.count), explanations.count <= 2,
+              (candidates + explanations).allSatisfy({ !$0.contains("<think") && !$0.contains("</think>") }) else {
             throw AssistantFailure.invalidResult
         }
-        let rich = Set(value.keys) == Set(["candidates", "explanations", "summary", "highlights"])
-        if rich {
-            guard action != .understandEnglish, candidates.count == 3,
-                  let summary = value["summary"] as? String,
-                  let highlights = emphasisTerms(value["highlights"]) else { throw AssistantFailure.invalidResult }
-            return try ModelResult(candidates: candidates, explanations: explanations,
-                                   summary: summary, highlights: highlights).validated()
-        }
-        guard action != .writeEnglish, Set(value.keys) == Set(["candidates", "explanations"]),
-              (1...2).contains(candidates.count), explanations.count <= 2 else { throw AssistantFailure.invalidResult }
         return try ModelResult(candidates: candidates, explanations: explanations.filter {
             !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
         }).validated()
@@ -104,6 +113,9 @@ public enum CloudAPIContract {
                 "Keep the general version unchanged if already correct. Style differences must not change meaning. " +
                 "Return only Markdown using exactly these five level-2 headings in order: ## General, ## Conversational, ## Academic, ## Notes, ## Summary. " +
                 "Under each of the first three headings write only that English answer. Use standard inline Markdown such as **bold** or `code` when useful, but no extra headings or commentary. " +
+                "Respect the input's layout in every version: keep its paragraphs, lists and intended line breaks, such as numbered steps on separate lines, instead of collapsing them into one paragraph. " +
+                "The input's line breaks may be imperfect, so you may join a sentence that is clearly broken by accident, or start a new line where a list item obviously begins. " +
+                "This layout guidance refines the line-break preservation rule below. " +
                 "Under ## Notes write exactly three Chinese bullet items in the same order, one brief explanation per version, without prefixing the version name. " +
                 "Under ## Summary write two or three concise Chinese sentences about corrections, key expressions and usage differences. " +
                 "Do not use JSON or fenced code blocks. Do not repeat the answers in Notes or Summary. No follow-up question or praise."

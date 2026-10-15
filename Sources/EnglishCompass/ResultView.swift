@@ -4,22 +4,42 @@ import AssistantCore
 struct ResultView: View {
     @ObservedObject var session: AssistantSession
     @State private var showDebug = false
+    /// Small mode badge shown next to the title (e.g. "LAB").
+    var modeBadge: String?
+    /// False in Lab mode, which has its own inspector and no Settings window.
+    var showsSettingsButton = true
+    /// Lab-only: opens the prompt/request/response inspector.
+    var onInspector: (() -> Void)?
     private let accent = Color(red: 0.08, green: 0.43, blue: 0.40)
 
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
-            HStack {
+            HStack(spacing: 8) {
                 Text(session.action.title).font(.system(size: 13, weight: .semibold))
+                if let modeBadge {
+                    Text(modeBadge).font(.system(size: 9, weight: .bold)).tracking(1)
+                        .foregroundStyle(accent)
+                        .padding(.horizontal, 6).padding(.vertical, 2)
+                        .background(accent.opacity(0.14), in: Capsule())
+                }
                 Spacer()
+                if onInspector != nil {
+                    Button { onInspector?() } label: { Image(systemName: "text.magnifyingglass") }
+                        .buttonStyle(.plain).foregroundStyle(.secondary)
+                        .help("Prompt, request and response inspector")
+                        .accessibilityLabel("Open inspector")
+                }
                 if session.rawRequest != nil || session.rawResponse != nil {
                     Button { showDebug = true } label: { Image(systemName: "curlybraces") }
                         .buttonStyle(.plain).foregroundStyle(.secondary)
                         .help("Show raw request and response")
                         .accessibilityLabel("Show raw request and response")
                 }
-                Button { session.onSettings?() } label: { Image(systemName: "gearshape") }
-                    .buttonStyle(.plain).foregroundStyle(.secondary)
-                    .help("Settings").accessibilityLabel("Settings")
+                if showsSettingsButton {
+                    Button { session.onSettings?() } label: { Image(systemName: "gearshape") }
+                        .buttonStyle(.plain).foregroundStyle(.secondary)
+                        .help("Settings").accessibilityLabel("Settings")
+                }
             }
             if session.isUITest {
                 Text("UI TEST FIXTURE - NOT REAL INFERENCE").font(.caption).foregroundStyle(.orange)
@@ -30,7 +50,9 @@ struct ResultView: View {
                 if session.phase == .error, let raw = session.rawResponse {
                     JSONDebugView(raw: raw)
                 }
-                editor($session.input, id: "manual_input", placeholder: "Paste or type your text...")
+                editor($session.input, id: "manual_input", placeholder: "Paste or type your text...") { content, viewport in
+                    session.reportInputMeasure(content: content, viewport: viewport)
+                }
                 HStack {
                     Button { session.pasteInput() } label: {
                         Label("Paste", systemImage: "clipboard")
@@ -134,10 +156,12 @@ struct ResultView: View {
         }
     }
 
-    private func editor(_ text: Binding<String>, id: String, placeholder: String = "") -> some View {
+    private func editor(_ text: Binding<String>, id: String, placeholder: String = "",
+                        onMeasure: ((CGFloat, CGFloat) -> Void)? = nil) -> some View {
         NativeTextEditor(text: text, placeholder: placeholder, identifier: id,
-                         label: id == "manual_input" ? "Input text" : "Editable result")
-            .frame(minHeight: 100, maxHeight: .infinity)
+                         label: id == "manual_input" ? "Input text" : "Editable result",
+                         onMeasure: onMeasure)
+            .frame(minHeight: 96, maxHeight: .infinity)
             .background(Color(nsColor: .textBackgroundColor), in: RoundedRectangle(cornerRadius: 10))
             .overlay(RoundedRectangle(cornerRadius: 10).strokeBorder(Color.primary.opacity(0.08)))
     }

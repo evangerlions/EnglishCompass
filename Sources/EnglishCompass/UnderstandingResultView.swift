@@ -9,7 +9,80 @@ struct UnderstandingResultView: View {
     private let accent = Color(red: 0.08, green: 0.43, blue: 0.40)
 
     var body: some View {
-        if let result = session.result, let index = session.candidateIndex {
+        VStack(spacing: 0) {
+            if let result = session.result, let index = session.candidateIndex {
+                resultBody(result: result, index: index)
+            } else if session.isStreaming {
+                streamingBody
+            }
+            if !session.isStreaming { bottomBar }
+        }
+        .focusable().focusEffectDisabled().focused($keyboardFocused)
+        .onAppear { keyboardFocused = true }
+        .onKeyPress(.space) { session.speakCurrent(); return .handled }
+    }
+
+    private var bottomBar: some View {
+        HStack {
+            Button { session.copy() } label: {
+                Label(session.message == "Copied." ? "Copied" : "Copy translation",
+                      systemImage: session.message == "Copied." ? "checkmark" : "doc.on.doc")
+            }
+            .controlSize(.large).accessibilityIdentifier("copy_button")
+            Spacer()
+            Text("Space 朗读原文").font(.system(size: 11)).foregroundStyle(.secondary)
+        }
+    }
+
+    @ViewBuilder
+    private var streamingBody: some View {
+        let live = session.liveUnderstandSections
+        ScrollView {
+            VStack(alignment: .leading, spacing: 14) {
+                if !session.input.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                    section(title: "原文", systemImage: "text.quote") {
+                        HStack(alignment: .top, spacing: 8) {
+                            Text(session.input).font(.system(size: 14))
+                                .textSelection(.enabled).fixedSize(horizontal: false, vertical: true)
+                            Spacer(minLength: 0)
+                        }
+                    }
+                }
+                section(title: "翻译", systemImage: "character.bubble") {
+                    if let t = live.translation {
+                        Text(markdown(t)).font(.system(size: 17))
+                            .textSelection(.enabled).fixedSize(horizontal: false, vertical: true)
+                    } else {
+                        HStack(spacing: 8) {
+                            Text("等待生成…").font(.system(size: 14)).foregroundStyle(.tertiary)
+                            Circle().fill(accent).frame(width: 6, height: 6).opacity(0.8)
+                        }
+                    }
+                }
+                if let notes = live.notes {
+                    section(title: "讲解", systemImage: "text.book.closed") {
+                        VStack(alignment: .leading, spacing: 8) {
+                            ForEach(Array(noteItems(notes).enumerated()), id: \.offset) { _, item in
+                                HStack(alignment: .firstTextBaseline, spacing: 7) {
+                                    Circle().fill(accent.opacity(0.75)).frame(width: 4, height: 4)
+                                    Text(markdown(item)).font(.system(size: 13)).foregroundStyle(.secondary)
+                                        .fixedSize(horizontal: false, vertical: true)
+                                }
+                            }
+                        }
+                    }
+                }
+            }.padding(2)
+                .onHeightChange { contentHeight = $0 }
+        }
+        .onHeightChange { viewportHeight = $0 }
+        .onChange(of: contentHeight == 0 || viewportHeight == 0 ? 0 : 1, initial: true) { _, _ in
+            session.reportResultMeasure(content: contentHeight, viewport: viewportHeight)
+        }
+    }
+
+    @ViewBuilder
+    private func resultBody(result: ModelResult, index: Int) -> some View {
             ScrollView {
                 VStack(alignment: .leading, spacing: 14) {
                     if result.candidates.count > 1 { meaningPicker(result) }
@@ -56,20 +129,9 @@ struct UnderstandingResultView: View {
                     .onHeightChange { contentHeight = $0 }
             }
             .onHeightChange { viewportHeight = $0 }
-            .reportsScrollOverflow(content: contentHeight, viewport: viewportHeight, to: session)
-            HStack {
-                Button { session.copy() } label: {
-                    Label(session.message == "Copied." ? "Copied" : "Copy translation",
-                          systemImage: session.message == "Copied." ? "checkmark" : "doc.on.doc")
-                }
-                .controlSize(.large).accessibilityIdentifier("copy_button")
-                Spacer()
-                Text("Space 朗读原文").font(.system(size: 11)).foregroundStyle(.secondary)
+            .onChange(of: contentHeight == 0 || viewportHeight == 0 ? 0 : 1, initial: true) { _, _ in
+                session.reportResultMeasure(content: contentHeight, viewport: viewportHeight)
             }
-            .focusable().focusEffectDisabled().focused($keyboardFocused)
-            .onAppear { keyboardFocused = true }
-            .onKeyPress(.space) { session.speakCurrent(); return .handled }
-        }
     }
 
     private func meaningPicker(_ result: ModelResult) -> some View {

@@ -26,11 +26,13 @@ final class WritingMarkdownPayloadTests: XCTestCase {
             "Execute an AX hit-test at the current mouse coordinates."
         ])
         XCTAssertEqual(result.markdownCandidates[0], "Perform an **AX hit-test** at the mouse position.")
-        XCTAssertEqual(result.explanations, ["通用版准确简洁。", "口语版更自然。", "学术版更正式。"])
-        XCTAssertEqual(result.summary, "", "Summary stays optional for older-shaped responses")
+        // Notes are free-form body content, not per-card copy data.
+        XCTAssertTrue(result.explanations.isEmpty)
+        XCTAssertTrue(result.summary.contains("## Notes"))
+        XCTAssertTrue(result.summary.contains("通用版准确简洁。"))
     }
 
-    func testSummarySectionIsParsedAndVersionLabelsAreStripped() throws {
+    func testSummaryAndNotesAreBothKeptAsBody() throws {
         let withSummary = """
         ## General
         Look at the part my arrow points to.
@@ -50,13 +52,43 @@ final class WritingMarkdownPayloadTests: XCTestCase {
         原句结构完整，主要调整了**指示表达**。口语版更随意，学术版更正式。
         """
         let result = try WritingMarkdownPayload.parse(withSummary)
-        XCTAssertEqual(result.summary, "原句结构完整，主要调整了**指示表达**。口语版更随意，学术版更正式。")
-        XCTAssertEqual(result.explanations, ["自然中立的语气。", "使用 **\"Check out\"** 更口语。", "用词正式精确。"])
+        XCTAssertEqual(result.candidates.count, 3)
+        XCTAssertTrue(result.summary.contains("## Notes"))
+        XCTAssertTrue(result.summary.contains("使用 **\"Check out\"** 更口语。"))
+        XCTAssertTrue(result.summary.contains("## Summary"))
+        XCTAssertTrue(result.summary.contains("主要调整了**指示表达**"))
     }
 
     func testWritingPromptRequestsSummarySection() throws {
         let prompt = try CloudAPIContract.prompt(action: .writeEnglish, additionalInstructions: "")
         XCTAssertTrue(prompt.contains("## Summary"))
+    }
+
+    func testMultiLineAnswerKeepsEveryLineForDisplayAndCopy() throws {
+        let response = """
+        ## General
+        Now let's switch branches.
+        1. Delete unused test files first.
+        2. Switch to the latest code of branch 47.5.0.
+
+        ## Conversational
+        Let's switch branches now.
+        First, clean up the test files.
+        Then switch to 47.5.0.
+
+        ## Academic
+        Proceed with the branch switch.
+        Remove obsolete test artifacts.
+        Update to branch 47.5.0.
+
+        ## Notes
+        - a
+        - b
+        - c
+        """
+        let result = try WritingMarkdownPayload.parse(response)
+        XCTAssertEqual(result.candidates[0], "Now let's switch branches.\n1. Delete unused test files first.\n2. Switch to the latest code of branch 47.5.0.")
+        XCTAssertEqual(result.candidates.map { $0.components(separatedBy: "\n").count }, [3, 3, 3])
     }
 
     func testAsteriskBulletsAndHeadingVariantsAreAccepted() throws {
@@ -77,21 +109,61 @@ final class WritingMarkdownPayloadTests: XCTestCase {
         """
         let result = try WritingMarkdownPayload.parse(variant)
         XCTAssertEqual(result.candidates, ["greetings", "hey", "Greetings."])
-        XCTAssertEqual(result.explanations.count, 3)
+        XCTAssertTrue(result.summary.contains("通用版本保留了原始输入。"))
     }
 
     func testMalformedSectionedMarkdownFailsInsteadOfBecomingOneAnswer() throws {
+        // Missing two required answer sections must fail.
         let broken = "## General\ngreetings\n\n## Notes\n* only one note"
         let envelope = try JSONSerialization.data(withJSONObject: ["model": CloudAPIContract.model, "choices": [
             ["index": 0, "finish_reason": "stop", "message": ["content": broken]]]])
         XCTAssertThrowsError(try CloudAPIContract.parse(data: envelope, statusCode: 200, action: .writeEnglish))
     }
 
-    func testMissingDuplicateOrExtraSectionsFailClosed() throws {
+    func testNotesEmittedOnOnePhysicalLineDoNotBreakAcceptance() throws {
+        // Notes shape is irrelevant to acceptance; only the three answers matter.
+        let body = """
+        ## General
+        one
+
+        ## Conversational
+        two
+
+        ## Academic
+        three
+
+        ## Notes
+        * first point here  * second one here  * third one here
+
+        ## Summary
+        A short summary sentence.
+        """
+        let result = try WritingMarkdownPayload.parse(body)
+        XCTAssertEqual(result.candidates, ["one", "two", "three"])
+        XCTAssertTrue(result.summary.contains("first point here"))
+    }
+
+    func testAnswerWithNoBodyStillAccepted() throws {
+        // No Notes/Summary at all: the three answers alone are enough.
+        let body = """
+        ## General
+        one
+
+        ## Conversational
+        two
+
+        ## Academic
+        three
+        """
+        let result = try WritingMarkdownPayload.parse(body)
+        XCTAssertEqual(result.candidates, ["one", "two", "three"])
+        XCTAssertTrue(result.summary.isEmpty)
+    }
+
+    func testMissingOrDuplicateAnswerSectionsFailClosed() throws {
         let invalid = [
-            markdown.replacingOccurrences(of: "## Notes", with: "## More"),
-            markdown + "\n## Notes\n- duplicate",
-            markdown.replacingOccurrences(of: "## Academic\nExecute an `AX hit-test` at the current mouse coordinates.\n\n", with: "")
+            markdown.replacingOccurrences(of: "## Academic\nExecute an `AX hit-test` at the current mouse coordinates.\n\n", with: ""),
+            markdown + "\n## General\n- duplicate answer"
         ]
         for value in invalid { XCTAssertThrowsError(try WritingMarkdownPayload.parse(value)) }
     }

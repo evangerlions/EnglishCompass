@@ -22,6 +22,8 @@ struct WritingResultsView: View {
                                 card(result, index: index).id(index)
                             }
                             if !result.summary.isEmpty { summary(result.summary) }
+                        } else if session.isStreaming {
+                            streamingCards
                         }
                         ForEach(session.warnings, id: \.self) { warning in
                             Label(warning, systemImage: "exclamationmark.triangle").font(.caption)
@@ -38,7 +40,9 @@ struct WritingResultsView: View {
                 .padding(.horizontal, -14)
                 .scrollIndicators(.automatic)
                 .onHeightChange { viewportHeight = $0 }
-                .reportsScrollOverflow(content: contentHeight, viewport: viewportHeight, to: session)
+                .onChange(of: contentHeight == 0 || viewportHeight == 0 ? 0 : 1, initial: true) { _, _ in
+                    session.reportResultMeasure(content: contentHeight, viewport: viewportHeight)
+                }
                 .onChange(of: session.candidateIndex) { _, index in
                     guard let index else { return }
                     withAnimation(.easeOut(duration: 0.2)) { proxy.scrollTo(index, anchor: .center) }
@@ -52,6 +56,61 @@ struct WritingResultsView: View {
         .onKeyPress(.downArrow) { withAnimation(.snappy(duration: 0.22)) { session.moveCandidate(1) }; return .handled }
         .onKeyPress(.return) { session.copy(); return .handled }
         .onKeyPress(.space) { session.speakCurrent(); return .handled }
+    }
+
+    // MARK: Streaming
+
+    /// Three cards are always present during streaming. The card currently being
+    /// written shows its growing Markdown; cards not started yet show a light
+    /// placeholder so the layout never jumps. Selection/copy are disabled until
+    /// the finished payload passes strict parsing.
+    @ViewBuilder
+    private var streamingCards: some View {
+        let live = session.liveWriteSections
+        ForEach(0..<3, id: \.self) { index in
+            streamingCard(index: index, markdown: live.cards[index])
+        }
+        if let notes = live.notes { streamingBlock(title: "讲解", markdown: notes) }
+        if let summary = live.summary { streamingBlock(title: "整体说明", markdown: summary) }
+    }
+
+    private func streamingCard(index: Int, markdown: String?) -> some View {
+        let active = markdown != nil
+        return VStack(alignment: .leading, spacing: 8) {
+            HStack(spacing: 8) {
+                Text(titles[index])
+                    .font(.system(size: 11.5, weight: .bold)).tracking(0.6)
+                    .foregroundStyle(active ? accent : Color.secondary)
+                if active {
+                    Image(systemName: "circle.fill").font(.system(size: 7)).foregroundStyle(accent)
+                        .symbolEffect(.variableColor.iterative)
+                }
+                Spacer()
+            }
+            if let markdown {
+                Text(inlineMarkdown(markdown))
+                    .font(.system(size: 15))
+                    .foregroundStyle(Color.primary.opacity(0.9))
+                    .lineSpacing(2)
+                    .fixedSize(horizontal: false, vertical: true)
+            } else {
+                Text("等待生成…").font(.system(size: 13)).foregroundStyle(.tertiary)
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(.horizontal, 16).padding(.vertical, 14)
+        .background { cardSurface(selected: active) }
+    }
+
+    private func streamingBlock(title: String, markdown: String) -> some View {
+        VStack(alignment: .leading, spacing: 5) {
+            Text(title).font(.system(size: 11.5, weight: .bold)).tracking(0.6).foregroundStyle(.secondary)
+            Text(inlineMarkdown(markdown)).font(.system(size: 12.5)).foregroundStyle(.secondary)
+                .lineSpacing(2).fixedSize(horizontal: false, vertical: true)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(.horizontal, 16).padding(.vertical, 12)
+        .background(Color.primary.opacity(0.035), in: RoundedRectangle(cornerRadius: 14, style: .continuous))
     }
 
     // MARK: Card
@@ -75,17 +134,11 @@ struct WritingResultsView: View {
                 copyButton(index: index, selected: selected, copied: copied)
             }
             answerText(result, index: index)
-                .font(.system(size: 15, weight: selected ? .medium : .regular))
+                .font(.system(size: 15))
                 .foregroundStyle(selected ? Color.primary : Color.primary.opacity(0.72))
                 .lineSpacing(2)
                 .fixedSize(horizontal: false, vertical: true)
                 .textSelection(.enabled)
-            if result.explanations.indices.contains(index) {
-                Text(inlineMarkdown(result.explanations[index]))
-                    .font(.system(size: 12))
-                    .foregroundStyle(Color.secondary.opacity(selected ? 1 : 0.85))
-                    .fixedSize(horizontal: false, vertical: true)
-            }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(.horizontal, 16).padding(.vertical, 14)
@@ -134,10 +187,12 @@ struct WritingResultsView: View {
         let button = Button {
             session.chooseCandidate(index); session.copy(); keyboardFocused = true
         } label: {
-            Label(copied ? "Copied" : "Copy", systemImage: copied ? "checkmark" : "doc.on.doc")
-                .font(.system(size: 11.5, weight: .semibold))
+            Image(systemName: copied ? "checkmark" : "doc.on.doc")
+                .font(.system(size: 12, weight: .medium))
+                .frame(width: 26, height: 22)
         }
-        .controlSize(.small)
+        .help(copied ? "Copied" : "Copy")
+        .accessibilityLabel(copied ? "Copied" : "Copy")
         .accessibilityIdentifier("copy_answer_\(index)")
         if #available(macOS 26.0, *) {
             if selected { button.buttonStyle(.glassProminent).tint(accent) }
@@ -151,17 +206,57 @@ struct WritingResultsView: View {
     // MARK: Summary and bottom bar
 
     private func summary(_ text: String) -> some View {
-        VStack(alignment: .leading, spacing: 5) {
-            Text("整体说明").font(.system(size: 11.5, weight: .bold)).tracking(0.6).foregroundStyle(.secondary)
-            Text(inlineMarkdown(text)).font(.system(size: 12.5)).foregroundStyle(.secondary)
-                .lineSpacing(2)
-                .fixedSize(horizontal: false, vertical: true)
-                .textSelection(.enabled)
+        bodyBlock(text, defaultTitle: "整体说明")
+    }
+
+    /// Renders the free-form explanatory Markdown (## Notes / ## Summary or any
+    /// trailing prose). Headings are shown as small section titles; everything
+    /// else is rendered as inline Markdown body text.
+    private func bodyBlock(_ text: String, defaultTitle: String) -> some View {
+        let sections = bodySections(text, defaultTitle: defaultTitle)
+        return VStack(alignment: .leading, spacing: 10) {
+            ForEach(Array(sections.enumerated()), id: \.offset) { _, section in
+                VStack(alignment: .leading, spacing: 5) {
+                    Text(section.title)
+                        .font(.system(size: 11.5, weight: .bold)).tracking(0.6)
+                        .foregroundStyle(.secondary)
+                    Text(inlineMarkdown(section.body))
+                        .font(.system(size: 12.5)).foregroundStyle(.secondary)
+                        .lineSpacing(2)
+                        .fixedSize(horizontal: false, vertical: true)
+                        .textSelection(.enabled)
+                }
+            }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(.horizontal, 16).padding(.vertical, 12)
         .background(Color.primary.opacity(0.035), in: RoundedRectangle(cornerRadius: 14, style: .continuous))
         .accessibilityIdentifier("overall_explanation")
+    }
+
+    private struct BodySection { let title: String; let body: String }
+
+    private func bodySections(_ text: String, defaultTitle: String) -> [BodySection] {
+        let lines = text.replacingOccurrences(of: "\r\n", with: "\n").components(separatedBy: "\n")
+        var sections: [BodySection] = []
+        var title: String?
+        var body: [String] = []
+        func flush() {
+            let trimmed = body.joined(separator: "\n").trimmingCharacters(in: .whitespacesAndNewlines)
+            if !trimmed.isEmpty { sections.append(BodySection(title: title ?? defaultTitle, body: trimmed)) }
+            body.removeAll(keepingCapacity: true)
+        }
+        for line in lines {
+            let t = line.trimmingCharacters(in: .whitespaces)
+            if t.hasPrefix("## ") {
+                flush()
+                title = String(t.dropFirst(3)).trimmingCharacters(in: .whitespaces)
+            } else {
+                body.append(line)
+            }
+        }
+        flush()
+        return sections
     }
 
     private var bottomBar: some View {

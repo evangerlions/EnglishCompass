@@ -19,6 +19,13 @@ MainActor.assumeIsolated {
         }
     }
     let app = NSApplication.shared
+    if CommandLine.arguments.contains("--lab") {
+        // Local test window only: no shortcuts, status item, capture or Keychain.
+        let lab = LabAppDelegate()
+        app.delegate = lab
+        withExtendedLifetime(lab) { app.run() }
+        exit(0)
+    }
     let delegate = AppDelegate()
     app.delegate = delegate
     withExtendedLifetime(delegate) { app.run() }

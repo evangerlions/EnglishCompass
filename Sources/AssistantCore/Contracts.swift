@@ -21,8 +21,16 @@ public struct ModelResult: Codable, Equatable, Sendable {
     }
     public func validated() throws -> ModelResult {
         let rich = candidates.count == 3
-        guard (1...3).contains(candidates.count), explanations.count <= (rich ? 3 : 2),
-              !rich || (explanations.count == 3 && explanations.allSatisfy({ !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }) && (markdownCandidates.count == 3 || (!summary.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && highlights.count == 3))),
+        // For Markdown-section responses the explanatory content lives in
+        // `summary` as free-form Markdown; `explanations` may be empty. The
+        // legacy JSON rich response still requires exactly three explanations.
+        let markdownMode = !markdownCandidates.isEmpty
+        let notesOK: Bool = markdownMode
+            ? true
+            : (!rich || explanations.count == 3)
+        guard (1...3).contains(candidates.count),
+              markdownMode || explanations.count <= (rich ? 3 : 2),
+              !rich || (notesOK && explanations.allSatisfy({ !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }) && (markdownMode || (!summary.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && highlights.count == 3))),
               markdownCandidates.isEmpty || (markdownCandidates.count == candidates.count && markdownCandidates.allSatisfy({ !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty })),
               highlights.isEmpty || (highlights.count == candidates.count && highlights.enumerated().allSatisfy { index, terms in
                   terms.count <= 3 && terms.allSatisfy { !$0.isEmpty && candidates[index].contains($0) }

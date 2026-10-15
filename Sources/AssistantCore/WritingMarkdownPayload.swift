@@ -1,119 +1,113 @@
 import Foundation
 
-/// Fixed-section Markdown returned by the writing model. Markdown is retained for
-/// display while each section also exposes plain text for copy and replacement.
+/// Tolerant parser for the writing response.
+///
+/// Only the three copy-ready answers are structurally required, because those
+/// are what the cards copy and replace. Everything else (## Notes, ## Summary
+/// or any trailing prose) is treated as one Markdown body and shown as-is; it
+/// is never used for copy, so its exact shape does not matter. This keeps a
+/// response valid even when the provider reorders, merges or truncates the
+/// explanatory sections.
 enum WritingMarkdownPayload {
-    private static let sections = ["General", "Conversational", "Academic"]
+    static let answerHeadings = ["General", "Conversational", "Academic"]
 
     static func parse(_ content: String) throws -> ModelResult {
         let normalized = content.replacingOccurrences(of: "\r\n", with: "\n")
         guard !normalized.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
-              !normalized.contains("<think"), !normalized.contains("</think") else {
+              !normalized.contains("<think"), !normalized.contains("</think>") else {
             throw AssistantFailure.invalidResult
         }
 
-        var bodies: [String: String] = [:]
+        // Split into sections by any level-2 heading.
+        var answerBodies: [String: String] = [:]
+        var bodySections: [(heading: String, text: String)] = []
         var current: String?
         var lines: [String] = []
 
         func commit() {
-            guard let current else { return }
-            bodies[current] = lines.joined(separator: "\n").trimmingCharacters(in: .whitespacesAndNewlines)
+            guard let heading = current else { return }
+            let body = lines.joined(separator: "\n").trimmingCharacters(in: .whitespacesAndNewlines)
+            if answerHeadings.contains(heading) {
+                answerBodies[heading] = body
+            } else if !body.isEmpty {
+                bodySections.append((heading, body))
+            }
             lines.removeAll(keepingCapacity: true)
         }
 
         for line in normalized.components(separatedBy: "\n") {
-            if let heading = sectionHeading(line) {
+            if let heading = answerHeading(line) {
                 commit()
-                guard bodies[heading] == nil else { throw AssistantFailure.invalidResult }
+                guard answerBodies[heading] == nil else { throw AssistantFailure.invalidResult }
+                current = heading
+            } else if let heading = otherHeading(line) {
+                commit()
                 current = heading
             } else if current != nil {
                 lines.append(line)
             } else if !line.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                // Content before the first heading is not part of any card/body.
                 throw AssistantFailure.invalidResult
             }
         }
         commit()
 
-        // Summary is requested by the prompt but optional here, so a response
-        // without it still shows the three answers instead of failing.
-        let keys = Set(bodies.keys)
-        let required = Set(sections + ["Notes"])
-        guard keys == required || keys == required.union(["Summary"]) else { throw AssistantFailure.invalidResult }
-        let candidates = try sections.map { heading -> String in
-            guard let markdown = bodies[heading], !markdown.isEmpty else { throw AssistantFailure.invalidResult }
-            let plain = plainText(markdown)
+        // The three answers are the only required, copy-bound content.
+        let markdown = try answerHeadings.map { heading -> String in
+            guard let body = answerBodies[heading] else { throw AssistantFailure.invalidResult }
+            let plain = plainText(body)
             guard !plain.isEmpty else { throw AssistantFailure.invalidResult }
-            return plain
+            return body
         }
-        let notes = bodies["Notes"] ?? ""
-        let explanations = notes.components(separatedBy: "\n").compactMap(bulletText).map(removingVersionLabel)
-        guard explanations.count == 3 else { throw AssistantFailure.invalidResult }
+        let candidates = markdown.map { plainText($0) }
 
-        return try ModelResult(candidates: candidates, explanations: explanations,
-                               summary: bodies["Summary"] ?? "", highlights: [],
-                               markdownCandidates: sections.compactMap { bodies[$0] }).validated()
+        // Everything explanatory becomes one Markdown body, headings preserved.
+        let body = bodySections
+            .map { "## \($0.heading)\n\($0.text)" }
+            .joined(separator: "\n\n")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+
+        return try ModelResult(candidates: candidates, explanations: [],
+                               summary: body, highlights: [],
+                               markdownCandidates: markdown).validated()
     }
 
-    /// Drops a redundant leading version label such as `**General**:` or
-    /// `Conversational：`; each card already shows its own label.
-    static func removingVersionLabel(_ note: String) -> String {
-        let labels = sections + ["通用", "口语", "学术"]
-        var text = Substring(note)
-        for label in labels {
-            for prefix in ["**\(label)**", label] where text.lowercased().hasPrefix(prefix.lowercased()) {
-                let rest = text.dropFirst(prefix.count).drop(while: { $0 == " " })
-                if let first = rest.first, ":：-—".contains(first) {
-                    let value = rest.dropFirst().trimmingCharacters(in: .whitespaces)
-                    if !value.isEmpty { return value }
-                }
-                text = Substring(note)
-            }
-        }
-        return note
-    }
-
-    /// True when the content uses the fixed section headings, even if malformed.
-    /// Such content must never fall back to being shown as one plain-text answer.
+    /// True when the content uses one of our fixed level-2 headings, even if
+    /// malformed. Such content must never fall back to being one plain answer.
     static func looksSectioned(_ content: String) -> Bool {
         content.replacingOccurrences(of: "\r\n", with: "\n")
-            .components(separatedBy: "\n").contains { sectionHeading($0) != nil }
+            .components(separatedBy: "\n").contains { answerHeading($0) != nil || otherHeading($0) != nil }
     }
 
-    /// Accepts `## General`, `### General`, and case variants of the four headings.
-    static func sectionHeading(_ line: String) -> String? {
+    static func answerHeading(_ line: String) -> String? {
+        heading(line, candidates: answerHeadings)
+    }
+
+    /// Notes/Summary (and any unknown heading) are recognized so their text is
+    /// routed to the body instead of rejected.
+    private static func otherHeading(_ line: String) -> String? {
         let trimmed = line.trimmingCharacters(in: .whitespaces)
         guard trimmed.hasPrefix("##") else { return nil }
-        let title = trimmed.drop(while: { $0 == "#" }).trimmingCharacters(in: .whitespaces)
-        return (sections + ["Notes", "Summary"]).first { $0.caseInsensitiveCompare(title) == .orderedSame }
+        let title = String(trimmed.drop(while: { $0 == "#" })).trimmingCharacters(in: .whitespaces)
+        guard !title.isEmpty else { return nil }
+        return answerHeadings.contains(where: { $0.caseInsensitiveCompare(title) == .orderedSame }) ? nil : title
     }
 
-    /// Accepts `-`, `*`, `+`, `•` and `1.` / `1)` list markers.
-    static func bulletText(_ line: String) -> String? {
-        var text = Substring(line.trimmingCharacters(in: .whitespaces))
-        if let first = text.first, "-*+•".contains(first) {
-            text = text.dropFirst()
-        } else if let dot = text.firstIndex(where: { $0 == "." || $0 == ")" }),
-                  !text[..<dot].isEmpty, text[..<dot].allSatisfy(\.isNumber) {
-            text = text[text.index(after: dot)...]
-        } else {
-            return nil
-        }
-        let value = text.trimmingCharacters(in: .whitespaces)
-        return value.isEmpty ? nil : value
+    private static func heading(_ line: String, candidates: [String]) -> String? {
+        let trimmed = line.trimmingCharacters(in: .whitespaces)
+        guard trimmed.hasPrefix("##") else { return nil }
+        let title = String(trimmed.drop(while: { $0 == "#" })).trimmingCharacters(in: .whitespaces)
+        return candidates.first { $0.caseInsensitiveCompare(title) == .orderedSame }
     }
 
     /// Strips inline markup (`**`, `` ` ``, links) for copy and replacement while
     /// keeping line breaks, blank lines and list markers exactly as written.
-    /// `.full` would collapse paragraphs and lines into one run of text.
     static func plainText(_ markdown: String) -> String {
         do {
             let attributed = try AttributedString(markdown: markdown,
                                                   options: .init(interpretedSyntax: .inlineOnlyPreservingWhitespace))
             return String(attributed.characters).trimmingCharacters(in: .whitespacesAndNewlines)
         } catch {
-            // A deterministic fallback for malformed inline Markdown. Structural
-            // parsing still fails closed; only display markup is stripped here.
             return markdown
                 .replacingOccurrences(of: "**", with: "")
                 .replacingOccurrences(of: "__", with: "")
