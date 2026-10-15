@@ -2,8 +2,12 @@
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$ROOT"
-swift build -c release
-BIN="$(swift build -c release --show-bin-path)"
+BUILD_ARGS=(-c release)
+if [ -n "${SWIFT_BUILD_PATH:-}" ]; then
+    BUILD_ARGS+=(--scratch-path "$SWIFT_BUILD_PATH")
+fi
+swift build "${BUILD_ARGS[@]}"
+BIN="$(swift build "${BUILD_ARGS[@]}" --show-bin-path)"
 APP="$ROOT/dist/English Compass.app"
 mkdir -p "$APP/Contents/MacOS"
 cp "$BIN/EnglishCompass" "$APP/Contents/MacOS/EnglishCompass"

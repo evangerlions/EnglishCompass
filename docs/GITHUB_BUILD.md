@@ -38,5 +38,34 @@ Developer-signed test builds should be clearly labelled prereleases. Apple
 Development signing is not Developer ID distribution or notarization, and
 Gatekeeper/privacy/Keychain prompts can still occur on another Mac.
 
+## Developer ID and Notarization
+
+Use a valid `Developer ID Application` identity for external distribution. The
+packaging script enables Hardened Runtime and secure timestamps for certificate
+signatures. A signed DMG is not notarized until Apple accepts the submission.
+
+Store notarization credentials interactively on the build Mac (never commit
+passwords or pass them in shell command arguments):
+
+```bash
+xcrun notarytool store-credentials EnglishCompass-notary
+xcrun notarytool submit /absolute/path/EnglishCompass.dmg \
+  --keychain-profile EnglishCompass-notary --wait
+```
+
+Only after the result is `Accepted`, staple and validate the final installer:
+
+```bash
+xcrun stapler staple /absolute/path/EnglishCompass.dmg
+xcrun stapler validate /absolute/path/EnglishCompass.dmg
+spctl --assess --type open --context context:primary-signature --verbose=2 \
+  /absolute/path/EnglishCompass.dmg
+```
+
+Mount the final DMG and also assess the enclosed app with
+`spctl --assess --type execute --verbose=2`. Generate the SHA-256 file after
+stapling, since stapling modifies the installer. Publish only after these gates
+pass; do not treat a successful signature check as notarization approval.
+
 If signing Secrets were already added for an older proposed CI flow, the owner
 may remove them; this workflow does not use them.
