@@ -41,7 +41,7 @@ final class CloudAPIContractTests: XCTestCase {
         XCTAssertEqual(body["enable_thinking"] as? Bool, false)
         XCTAssertEqual(body["stream"] as? Bool, false)
         XCTAssertEqual(body["temperature"] as? Double, 0.1)
-        XCTAssertEqual(body["max_tokens"] as? Int, 4096)
+        XCTAssertEqual(body["max_tokens"] as? Int, 8192)
         XCTAssertEqual(body["response_format"] as? [String: String], ["type": "text"])
         let understand = try CloudAPIContract.request(text: text, action: .understandEnglish,
                                                       additionalInstructions: "", key: key)

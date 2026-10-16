@@ -22,6 +22,7 @@ protocol InferencePerforming: AnyObject {
                      onDelta: @escaping @MainActor (String) -> Void) async throws -> String
     func cancel()
     func prepareCredential()
+    func useModel(_ model: QwenModel)
 }
 
 extension InferencePerforming {
@@ -33,6 +34,7 @@ extension InferencePerforming {
         throw AssistantFailure.cloudUnavailable
     }
     func prepareCredential() {}
+    func useModel(_ model: QwenModel) {}
 }
 
 @MainActor
@@ -40,6 +42,7 @@ final class InferenceService: InferencePerforming {
     let usesStreaming = true
     private let session: URLSession
     private let credential: () throws -> String
+    private var selectedModel: QwenModel = .flash37
     // Process-local only: never persist or log this copy of the Keychain secret.
     private var cachedCredential: String?
     private var active: Task<ModelResult, Error>?
@@ -56,9 +59,12 @@ final class InferenceService: InferencePerforming {
         configuration.httpCookieStorage = nil
         configuration.requestCachePolicy = .reloadIgnoringLocalCacheData
         configuration.timeoutIntervalForRequest = 60
-        configuration.timeoutIntervalForResource = 120
+        // Whole-response cap. At ~64 tok/s an 8192-token answer needs ~130s,
+        // so 120s would cut the longest outputs off mid-stream.
+        configuration.timeoutIntervalForResource = 300
         self.session = URLSession(configuration: configuration, delegate: CloudSessionDelegate(), delegateQueue: nil)
     }
+    func useModel(_ model: QwenModel) { selectedModel = model }
     func cancel() {
         operationID = nil
         active?.cancel()
@@ -83,7 +89,8 @@ final class InferenceService: InferencePerforming {
         guard operationID == nil else { throw AssistantFailure.cloudUnavailable }
         try CloudAPIContract.validateInput(text)
         let key = try cachedCredential ?? credential()
-        let request = try CloudAPIContract.request(text: text, action: action, additionalInstructions: additionalInstructions, key: key)
+        let request = try CloudAPIContract.request(text: text, action: action, additionalInstructions: additionalInstructions,
+                                                   key: key, model: selectedModel.rawValue)
         lastRawRequest = request.httpBody.flatMap { String(data: $0, encoding: .utf8) }
         lastRawResponse = nil
         cachedCredential = key
@@ -147,7 +154,7 @@ final class InferenceService: InferencePerforming {
         let key = try cachedCredential ?? credential()
         let request = try CloudAPIContract.request(text: text, action: action,
                                                    additionalInstructions: additionalInstructions,
-                                                   key: key, stream: true)
+                                                   key: key, stream: true, model: selectedModel.rawValue)
         lastRawRequest = request.httpBody.flatMap { String(data: $0, encoding: .utf8) }
         lastRawResponse = nil
         cachedCredential = key
@@ -160,12 +167,27 @@ final class InferenceService: InferencePerforming {
             defer { bytes.task.cancel() }
             try Task.checkCancellation()
             guard let http = response as? HTTPURLResponse else { throw AssistantFailure.cloudUnavailable }
-            // Surface provider HTTP errors with the same mapping as non-stream.
-            switch http.statusCode {
-            case 200: break
-            case 401, 403: throw AssistantFailure.cloudAuth
-            case 429: throw AssistantFailure.cloudRateLimit
-            default: throw AssistantFailure.cloudUnavailable
+            var wireData = Data()
+            defer {
+                // Includes metadata-only events, [DONE] and incomplete bytes if
+                // transport ends early. Stale requests cannot overwrite new ones.
+                if self.operationID == id, !wireData.isEmpty {
+                    self.lastRawResponse = String(decoding: wireData, as: UTF8.self)
+                }
+            }
+            // Keep the original HTTP error body for inspection, without exposing
+            // request headers or the credential in user-facing error messages.
+            if http.statusCode != 200 {
+                for try await byte in bytes {
+                    try Task.checkCancellation()
+                    guard wireData.count < 200_000 else { break }
+                    wireData.append(byte)
+                }
+                switch http.statusCode {
+                case 401, 403: throw AssistantFailure.cloudAuth
+                case 429: throw AssistantFailure.cloudRateLimit
+                default: throw AssistantFailure.cloudUnavailable
+                }
             }
 
             var accumulator = ""
@@ -192,12 +214,19 @@ final class InferenceService: InferencePerforming {
                 if let piece, !piece.isEmpty {
                     accumulator += piece
                     let snapshot = piece
-                    await MainActor.run { onDelta(snapshot) }
+                    await MainActor.run {
+                        guard self.operationID == id else { return }
+                        self.lastRawResponse = String(decoding: wireData, as: UTF8.self)
+                        onDelta(snapshot)
+                    }
                 }
             }
             for try await byte in bytes {
                 try Task.checkCancellation()
-                guard accumulator.utf8.count < 200_000 else { throw AssistantFailure.invalidResult }
+                guard wireData.count < 2_000_000, accumulator.utf8.count < 200_000 else {
+                    throw AssistantFailure.invalidResult
+                }
+                wireData.append(byte)
                 if byte == 0x0A {
                     await handleLine()
                 } else {
@@ -205,7 +234,6 @@ final class InferenceService: InferencePerforming {
                 }
             }
             await handleLine()
-            await MainActor.run { self.lastRawResponse = accumulator }
             return accumulator
         }
 

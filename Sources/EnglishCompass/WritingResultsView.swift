@@ -1,7 +1,9 @@
 import SwiftUI
+import AppKit
 import AssistantCore
 
-/// Three answers are always shown together; ↑ ↓ moves the highlight between them.
+/// Completed answers appear together; streaming answers appear as they start.
+/// ↑ ↓ moves the highlight between visible cards.
 /// Copy and replacement always use the exact plain-text answer, never the markup.
 struct WritingResultsView: View {
     @ObservedObject var session: AssistantSession
@@ -9,6 +11,7 @@ struct WritingResultsView: View {
     @Environment(\.colorScheme) private var colorScheme
     @State private var contentHeight: CGFloat = 0
     @State private var viewportHeight: CGFloat = 0
+    @State private var scrollSelectionIntoView = false
     private let titles = ["通用", "口语", "学术"]
     private let accent = Color(red: 0.07, green: 0.56, blue: 0.50)
 
@@ -40,11 +43,28 @@ struct WritingResultsView: View {
                 .padding(.horizontal, -14)
                 .scrollIndicators(.automatic)
                 .onHeightChange { viewportHeight = $0 }
-                .onChange(of: contentHeight == 0 || viewportHeight == 0 ? 0 : 1, initial: true) { _, _ in
-                    session.reportResultMeasure(content: contentHeight, viewport: viewportHeight)
+                // Report on EVERY size change, not just when both become
+                // non-zero: during streaming the content keeps growing while the
+                // viewport is already measured, and a boolean toggle would only
+                // fire once, pinning the window to the first card's height.
+                .onChange(of: contentHeight) { _, _ in
+                    if contentHeight > 0, viewportHeight > 0 {
+                        session.reportResultMeasure(content: contentHeight, viewport: viewportHeight)
+                    }
+                }
+                .onChange(of: viewportHeight) { _, _ in
+                    if contentHeight > 0, viewportHeight > 0 {
+                        session.reportResultMeasure(content: contentHeight, viewport: viewportHeight)
+                    }
+                }
+                .onAppear {
+                    if contentHeight > 0, viewportHeight > 0 {
+                        session.reportResultMeasure(content: contentHeight, viewport: viewportHeight)
+                    }
                 }
                 .onChange(of: session.candidateIndex) { _, index in
-                    guard let index else { return }
+                    guard scrollSelectionIntoView, let index else { return }
+                    scrollSelectionIntoView = false
                     withAnimation(.easeOut(duration: 0.2)) { proxy.scrollTo(index, anchor: .center) }
                 }
             }
@@ -52,61 +72,115 @@ struct WritingResultsView: View {
         }
         .focusable().focusEffectDisabled().focused($keyboardFocused)
         .onAppear { keyboardFocused = true }
-        .onKeyPress(.upArrow) { withAnimation(.snappy(duration: 0.22)) { session.moveCandidate(-1) }; return .handled }
-        .onKeyPress(.downArrow) { withAnimation(.snappy(duration: 0.22)) { session.moveCandidate(1) }; return .handled }
+        .onKeyPress(.upArrow) { moveSelection(-1); return .handled }
+        .onKeyPress(.downArrow) { moveSelection(1); return .handled }
         .onKeyPress(.return) { session.copy(); return .handled }
         .onKeyPress(.space) { session.speakCurrent(); return .handled }
     }
 
+    private func moveSelection(_ offset: Int) {
+        let previous = session.candidateIndex
+        scrollSelectionIntoView = true
+        session.moveCandidate(offset)
+        if session.candidateIndex == previous { scrollSelectionIntoView = false }
+    }
+
     // MARK: Streaming
 
-    /// Three cards are always present during streaming. The card currently being
-    /// written shows its growing Markdown; cards not started yet show a light
-    /// placeholder so the layout never jumps. Selection/copy are disabled until
-    /// the finished payload passes strict parsing.
+    /// Only cards that have started are shown. The card currently streaming is
+    /// selectable (click or long-press) and shows copy once it has any text;
+    /// a finished card also shows the speak button. Default selection is card 0.
     @ViewBuilder
     private var streamingCards: some View {
         let live = session.liveWriteSections
         ForEach(0..<3, id: \.self) { index in
-            streamingCard(index: index, markdown: live.cards[index])
+            if let markdown = live.cards[index] {
+                streamingCard(index: index, markdown: markdown,
+                              isCurrent: live.current == index)
+            }
         }
         if let notes = live.notes { streamingBlock(title: "讲解", markdown: notes) }
         if let summary = live.summary { streamingBlock(title: "整体说明", markdown: summary) }
     }
 
-    private func streamingCard(index: Int, markdown: String?) -> some View {
-        let active = markdown != nil
+    private func streamingCard(index: Int, markdown: String, isCurrent: Bool) -> some View {
+        let selected = session.candidateIndex == index
+        let finished = !isCurrent
+        let plain = plainCopy(markdown)
         return VStack(alignment: .leading, spacing: 8) {
             HStack(spacing: 8) {
                 Text(titles[index])
                     .font(.system(size: 11.5, weight: .bold)).tracking(0.6)
-                    .foregroundStyle(active ? accent : Color.secondary)
-                if active {
+                    .foregroundStyle(selected ? accent : Color.secondary)
+                if selected {
+                    Image(systemName: "checkmark.circle.fill")
+                        .font(.system(size: 13)).foregroundStyle(accent)
+                        .transition(.scale.combined(with: .opacity))
+                } else if !finished {
                     Image(systemName: "circle.fill").font(.system(size: 7)).foregroundStyle(accent)
                         .symbolEffect(.variableColor.iterative)
                 }
                 Spacer()
+                // Speak only once this card is done streaming.
+                if finished {
+                    SpeakButton(speech: session.speech, text: plain, tint: accent)
+                        .accessibilityIdentifier("speak_answer_\(index)")
+                }
+                // Copy available as soon as there is any text, even mid-stream.
+                streamingCopyButton(index: index, plain: plain, selected: selected)
             }
-            if let markdown {
-                Text(inlineMarkdown(markdown))
-                    .font(.system(size: 15))
-                    .foregroundStyle(Color.primary.opacity(0.9))
-                    .lineSpacing(2)
-                    .fixedSize(horizontal: false, vertical: true)
-            } else {
-                Text("等待生成…").font(.system(size: 13)).foregroundStyle(.tertiary)
-            }
+            Text(inlineMarkdown(markdown))
+                .font(.system(size: 15))
+                .foregroundStyle(Color.primary.opacity(0.9))
+                .lineSpacing(2)
+                .fixedSize(horizontal: false, vertical: true)
+                .textSelection(.enabled)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(.horizontal, 16).padding(.vertical, 14)
-        .background { cardSurface(selected: active) }
+        .background { cardSurface(selected: selected) }
+        .background {
+            CardSelectionObserver { session.chooseStreamingCandidate(index, plain: plain) }
+        }
+        .accessibilityElement(children: .contain)
+        .accessibilityAddTraits(selected ? .isSelected : [])
+        .accessibilityIdentifier("answer_card_\(index)")
+    }
+
+    @ViewBuilder
+    private func streamingCopyButton(index: Int, plain: String, selected: Bool) -> some View {
+        let copied = selected && session.message == "Copied."
+        let button = Button {
+            session.chooseStreamingCandidate(index, plain: plain)
+            NSPasteboard.general.clearContents()
+            NSPasteboard.general.setString(plain, forType: .string)
+            session.message = "Copied."
+        } label: {
+            Image(systemName: copied ? "checkmark" : "doc.on.doc")
+                .font(.system(size: 12, weight: .medium))
+                .frame(width: 26, height: 22)
+        }
+        .help(copied ? "Copied" : "Copy")
+        .accessibilityLabel(copied ? "Copied" : "Copy")
+        .accessibilityIdentifier("copy_answer_\(index)")
+        if #available(macOS 26.0, *) {
+            if selected { button.buttonStyle(.glassProminent).tint(accent) }
+            else { button.buttonStyle(.glass) }
+        } else {
+            if selected { button.buttonStyle(.borderedProminent).tint(accent) }
+            else { button.buttonStyle(.bordered) }
+        }
+    }
+
+    /// Plain text for copy during streaming, reusing the same markup stripper.
+    private func plainCopy(_ markdown: String) -> String {
+        WritingMarkdownPayload.plainText(markdown)
     }
 
     private func streamingBlock(title: String, markdown: String) -> some View {
         VStack(alignment: .leading, spacing: 5) {
             Text(title).font(.system(size: 11.5, weight: .bold)).tracking(0.6).foregroundStyle(.secondary)
-            Text(inlineMarkdown(markdown)).font(.system(size: 12.5)).foregroundStyle(.secondary)
-                .lineSpacing(2).fixedSize(horizontal: false, vertical: true)
+            MarkdownBody(source: markdown).foregroundStyle(.secondary)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(.horizontal, 16).padding(.vertical, 12)
@@ -143,11 +217,10 @@ struct WritingResultsView: View {
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(.horizontal, 16).padding(.vertical, 14)
         .background { cardSurface(selected: selected) }
-        .contentShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
-        .onTapGesture {
-            withAnimation(.snappy(duration: 0.22)) { session.chooseCandidate(index) }
-            keyboardFocused = true
+        .background {
+            CardSelectionObserver { session.chooseCandidate(index) }
         }
+        .accessibilityIdentifier("answer_card_\(index)")
         .accessibilityElement(children: .contain)
         .accessibilityAddTraits(selected ? .isSelected : [])
     }
@@ -206,57 +279,16 @@ struct WritingResultsView: View {
     // MARK: Summary and bottom bar
 
     private func summary(_ text: String) -> some View {
-        bodyBlock(text, defaultTitle: "整体说明")
-    }
-
-    /// Renders the free-form explanatory Markdown (## Notes / ## Summary or any
-    /// trailing prose). Headings are shown as small section titles; everything
-    /// else is rendered as inline Markdown body text.
-    private func bodyBlock(_ text: String, defaultTitle: String) -> some View {
-        let sections = bodySections(text, defaultTitle: defaultTitle)
-        return VStack(alignment: .leading, spacing: 10) {
-            ForEach(Array(sections.enumerated()), id: \.offset) { _, section in
-                VStack(alignment: .leading, spacing: 5) {
-                    Text(section.title)
-                        .font(.system(size: 11.5, weight: .bold)).tracking(0.6)
-                        .foregroundStyle(.secondary)
-                    Text(inlineMarkdown(section.body))
-                        .font(.system(size: 12.5)).foregroundStyle(.secondary)
-                        .lineSpacing(2)
-                        .fixedSize(horizontal: false, vertical: true)
-                        .textSelection(.enabled)
-                }
+        VStack(alignment: .leading, spacing: 5) {
+            if !text.trimmingCharacters(in: .whitespacesAndNewlines).hasPrefix("#") {
+                Text("整体说明").font(.system(size: 11.5, weight: .bold)).foregroundStyle(.secondary)
             }
+            MarkdownBody(source: text).foregroundStyle(.secondary)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(.horizontal, 16).padding(.vertical, 12)
         .background(Color.primary.opacity(0.035), in: RoundedRectangle(cornerRadius: 14, style: .continuous))
         .accessibilityIdentifier("overall_explanation")
-    }
-
-    private struct BodySection { let title: String; let body: String }
-
-    private func bodySections(_ text: String, defaultTitle: String) -> [BodySection] {
-        let lines = text.replacingOccurrences(of: "\r\n", with: "\n").components(separatedBy: "\n")
-        var sections: [BodySection] = []
-        var title: String?
-        var body: [String] = []
-        func flush() {
-            let trimmed = body.joined(separator: "\n").trimmingCharacters(in: .whitespacesAndNewlines)
-            if !trimmed.isEmpty { sections.append(BodySection(title: title ?? defaultTitle, body: trimmed)) }
-            body.removeAll(keepingCapacity: true)
-        }
-        for line in lines {
-            let t = line.trimmingCharacters(in: .whitespaces)
-            if t.hasPrefix("## ") {
-                flush()
-                title = String(t.dropFirst(3)).trimmingCharacters(in: .whitespaces)
-            } else {
-                body.append(line)
-            }
-        }
-        flush()
-        return sections
     }
 
     private var bottomBar: some View {

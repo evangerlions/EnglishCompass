@@ -47,6 +47,7 @@ enum ShortcutKind: String, CaseIterable {
 
 @MainActor
 final class Preferences: ObservableObject {
+    @Published var model: QwenModel { didSet { save() } }
     @Published var writeInstructions: String { didSet { save() } }
     @Published var understandInstructions: String { didSet { save() } }
     @Published var diagnostics: Bool { didSet { save() } }
@@ -64,6 +65,7 @@ final class Preferences: ObservableObject {
     private let defaults: UserDefaults
     init(defaults: UserDefaults = .standard) {
         self.defaults = defaults
+        model = QwenModel(rawValue: defaults.string(forKey: "qwenModel") ?? "") ?? .flash37
         // Retire mode settings and migrate the old shared prompt into both
         // action-specific fields without losing the user's existing preference.
         for key in ["provider", "writeMode", "understandMode"] { defaults.removeObject(forKey: key) }
@@ -120,6 +122,7 @@ final class Preferences: ObservableObject {
         defaults.data(forKey: key).flatMap { try? JSONDecoder().decode(Shortcut.self, from: $0) }
     }
     private func save() {
+        defaults.set(model.rawValue, forKey: "qwenModel")
         defaults.set(writeInstructions, forKey: "writeInstructions")
         defaults.set(understandInstructions, forKey: "understandInstructions")
         defaults.set(diagnostics, forKey: "diagnostics")

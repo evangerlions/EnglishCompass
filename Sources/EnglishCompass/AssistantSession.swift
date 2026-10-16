@@ -17,6 +17,7 @@ final class AssistantSession: ObservableObject {
     @Published var rawRequest: String?
     @Published private(set) var elapsedSeconds: TimeInterval?
     @Published private(set) var requestStartedAt: Date?
+    @Published private(set) var requestModel: QwenModel
     @Published var sourceName = "Manual input"
     /// Measured scroll content and viewport of the current result view.
     struct ResultMeasure: Equatable { var content: CGFloat; var viewport: CGFloat }
@@ -40,12 +41,20 @@ final class AssistantSession: ObservableObject {
     private var target: CapturedTarget?
     private var task: Task<Void, Never>?
     private var requestID = UUID()
+    // Carried from a best-effort parse to the committed result (chooseCandidate
+    // clears `message`), so a malformed-but-shown answer keeps its warning.
+    private var pendingNotice: String?
+    private var lastStreamed: String?
+    private var lastStreamedNonEmpty: String? {
+        lastStreamed.map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }.flatMap { $0.isEmpty ? nil : $0 }
+    }
     var onClose: (() -> Void)?
     var onSettings: (() -> Void)?
 
     init(preferences: Preferences, accessibility: AccessibilityBridge, inference: any InferencePerforming,
          speech: SpeechService? = nil) {
         self.preferences = preferences; self.accessibility = accessibility; self.inference = inference
+        self.requestModel = preferences.model
         self.speech = speech ?? SpeechService(preferences: preferences)
     }
     var isUITest: Bool { ProcessInfo.processInfo.arguments.contains("--ui-test") }
@@ -61,12 +70,14 @@ final class AssistantSession: ObservableObject {
 
     /// Live per-section Markdown for the Write response while streaming.
     /// Index order matches the three cards; nil means that card has not started.
-    var liveWriteSections: (cards: [String?], notes: String?, summary: String?) {
-        guard let md = streamingMarkdown else { return (Array(repeating: nil, count: 3), nil, nil) }
+    /// `current` is the index being written; earlier started cards are finished.
+    var liveWriteSections: (cards: [String?], notes: String?, summary: String?, current: Int?) {
+        guard let md = streamingMarkdown else { return (Array(repeating: nil, count: 3), nil, nil, nil) }
         var s = StreamingSections()
         s.ingest(md, known: StreamingSections.writeHeadings)
-        return ([s.displayOrNil("General"), s.displayOrNil("Conversational"), s.displayOrNil("Academic")],
-                s.displayOrNil("Notes"), s.displayOrNil("Summary"))
+        let cards = [s.displayOrNil("General"), s.displayOrNil("Conversational"), s.displayOrNil("Academic")]
+        return (cards, s.displayOrNil("Notes"), s.displayOrNil("Summary"),
+                s.currentHeadingIndex(in: StreamingSections.writeHeadings))
     }
 
     /// Live sections for the Understand response while streaming.
@@ -75,6 +86,26 @@ final class AssistantSession: ObservableObject {
         var s = StreamingSections()
         s.ingest(md, known: StreamingSections.understandHeadings)
         return (s.displayOrNil("Translation"), s.displayOrNil("Notes"))
+    }
+
+    /// Select a streaming card; the partial text becomes the copy/speak target.
+    func chooseStreamingCandidate(_ index: Int, plain: String) {
+        guard isStreaming, liveWriteSections.cards.indices.contains(index),
+              liveWriteSections.cards[index] != nil else { return }
+        candidateIndex = index
+        suggestion = plain
+        message = ""
+    }
+
+    /// Default and copy target are updated on deltas, never during View.body.
+    func refreshStreamingSelection() {
+        guard action == .writeEnglish, isStreaming else { return }
+        let cards = liveWriteSections.cards
+        let index = candidateIndex ?? cards.firstIndex(where: { $0 != nil })
+        guard let index, cards.indices.contains(index), let markdown = cards[index] else { return }
+        if candidateIndex != index { candidateIndex = index }
+        let plain = WritingMarkdownPayload.plainText(markdown)
+        if suggestion != plain { suggestion = plain }
     }
 
     func speakCurrent() {
@@ -139,15 +170,19 @@ final class AssistantSession: ObservableObject {
             sourceName = "Manual input"
         }
         phase = .processing; message = ""; result = nil; candidateIndex = nil; warnings = []; rawResponse = nil
+        lastStreamed = nil; pendingNotice = nil
         streamingMarkdown = ""
         elapsedSeconds = nil; requestStartedAt = Date()
         let id = UUID(); requestID = id
+        requestModel = preferences.model
+        let model = requestModel
         let text = input, action = action, additionalInstructions = preferences.instructions(for: action)
         Diagnostics.event("inference_started", action: action.rawValue, mode: "non-thinking")
         task = Task { [weak self] in
             guard let self else { return }
             guard !Task.isCancelled, self.requestID == id else { return }
             let started = Date()
+            self.inference.useModel(model)
             do {
                 let result: ModelResult
                 if self.isUITest {
@@ -161,16 +196,26 @@ final class AssistantSession: ObservableObject {
                         text: text, action: action, additionalInstructions: additionalInstructions
                     ) { [weak self] delta in
                         buffer += delta
-                        // Switch to the result surface immediately so the first
-                        // section can render while the rest keeps streaming.
-                        guard let self else { return }
+                        guard let self, !Task.isCancelled, self.requestID == id else { return }
                         if self.phase == .processing { self.phase = .result }
                         self.streamingMarkdown = buffer
+                        self.refreshStreamingSelection()
+                        self.lastStreamed = buffer
+                        self.rawRequest = self.inference.lastRawRequest
+                        self.rawResponse = self.inference.lastRawResponse ?? buffer
                     }
-                    // Streaming joined deltas are content only (no response
-                    // envelope); parse them with the content parser, which only
-                    // requires the three copy-ready answers.
-                    result = try CloudAPIContract.parseContent(content, action: action)
+                    self.lastStreamed = content
+                    // Strict parse first. If the response is well formed use it;
+                    // otherwise fall back to a best-effort result from whatever
+                    // arrived, so a malformed answer is still shown/copyable
+                    // instead of clearing the panel back to the input page.
+                    if let parsed = try? CloudAPIContract.parseContent(content, action: action) {
+                        result = parsed
+                    } else {
+                        // Malformed answer: keep it visible/copyable as best effort.
+                        result = BestEffortResult.make(content: content, action: action)
+                        self.pendingNotice = "The answer format was unexpected, so it is shown without the usual sections."
+                    }
                 } else {
                     result = try await self.inference.infer(text: text, action: action, additionalInstructions: additionalInstructions)
                 }
@@ -178,11 +223,14 @@ final class AssistantSession: ObservableObject {
                 elapsedSeconds = Date().timeIntervalSince(requestStartedAt ?? started)
                 requestStartedAt = nil
                 self.rawRequest = inference.lastRawRequest
-                self.rawResponse = inference.lastRawResponse
+                self.rawResponse = inference.lastRawResponse ?? lastStreamed
                 self.resultMeasure = nil
                 self.streamingMarkdown = nil
                 self.result = result
-                if action == .writeEnglish || result.candidates.count == 1 { chooseCandidate(0) }
+                if action == .writeEnglish || result.candidates.count == 1 {
+                    chooseCandidate(result.candidates.indices.contains(candidateIndex ?? -1) ? candidateIndex! : 0)
+                }
+                if let notice = self.pendingNotice { self.message = notice; self.pendingNotice = nil }
                 phase = .result
                 Diagnostics.event("inference_success", action: action.rawValue, mode: "stream")
                 Diagnostics.metrics(elapsed: Date().timeIntervalSince(started), characters: text.count)
@@ -191,6 +239,21 @@ final class AssistantSession: ObservableObject {
                 elapsedSeconds = Date().timeIntervalSince(requestStartedAt ?? started)
                 requestStartedAt = nil
                 self.rawRequest = inference.lastRawRequest
+                // If anything streamed before the failure, keep it as a
+                // best-effort result instead of dismissing to the error/input page.
+                if let streamed = self.lastStreamedNonEmpty, !streamed.isEmpty {
+                    let fallback = BestEffortResult.make(content: streamed, action: action)
+                    self.rawResponse = inference.lastRawResponse ?? streamed
+                    self.resultMeasure = nil
+                    self.streamingMarkdown = nil
+                    self.result = fallback
+                    if action == .writeEnglish || fallback.candidates.count == 1 {
+                        chooseCandidate(fallback.candidates.indices.contains(candidateIndex ?? -1) ? candidateIndex! : 0)
+                    }
+                    self.message = "The request ended unexpectedly; showing what was received."
+                    phase = .result
+                    return
+                }
                 self.rawResponse = inference.lastRawResponse
                 phase = .error
                 streamingMarkdown = nil
@@ -211,6 +274,14 @@ final class AssistantSession: ObservableObject {
         validateSuggestion()
     }
     func moveCandidate(_ offset: Int) {
+        if isStreaming {
+            let visible = liveWriteSections.cards.indices.filter { liveWriteSections.cards[$0] != nil }
+            guard !visible.isEmpty else { return }
+            let position = visible.firstIndex(of: candidateIndex ?? -1) ?? 0
+            let index = visible[min(max(position + offset, 0), visible.count - 1)]
+            chooseStreamingCandidate(index, plain: WritingMarkdownPayload.plainText(liveWriteSections.cards[index]!))
+            return
+        }
         guard phase == .result, action == .writeEnglish, let result else { return }
         chooseCandidate(min(max((candidateIndex ?? 0) + offset, 0), result.candidates.count - 1))
     }

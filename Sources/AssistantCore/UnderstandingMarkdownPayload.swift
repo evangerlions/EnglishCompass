@@ -33,12 +33,11 @@ enum UnderstandingMarkdownPayload {
             lines.removeAll(keepingCapacity: true)
         }
         for line in content.components(separatedBy: "\n") {
-            if line.hasPrefix("## ") {
+            // Only our fixed names start a section. Any other heading (e.g. one
+            // the user's text contained) is ordinary content of the current section.
+            if let heading = WritingMarkdownPayload.heading(line, candidates: ["Translation", "Notes"]) {
                 commit()
-                let heading = String(line.dropFirst(3)).trimmingCharacters(in: .whitespaces)
-                guard ["Translation", "Notes"].contains(heading), sections[heading] == nil else {
-                    throw AssistantFailure.invalidResult
-                }
+                guard sections[heading] == nil else { throw AssistantFailure.invalidResult }
                 current = heading
             } else if current != nil {
                 lines.append(line)

@@ -4,10 +4,10 @@ import SwiftUI
 enum PanelSizing {
     static let width: CGFloat = 540
     static let minResultHeight: CGFloat = 220
-    static let maxResultHeight: CGFloat = 660
+    static let maxResultHeight: CGFloat = 660 * 2
     /// Input editor: compact when empty, grows with what is typed, then scrolls.
     static let minInputHeight: CGFloat = 240
-    static let maxInputHeight: CGFloat = 560
+    static let maxInputHeight: CGFloat = 560 * 2
     /// Height used for processing and replaced states (no measured content).
     static let defaultHeight: CGFloat = 360
     /// Ignore sub-pixel layout churn so a stable layout settles immediately.

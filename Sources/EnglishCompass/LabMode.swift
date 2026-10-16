@@ -161,6 +161,8 @@ private struct LabInspector: View {
 
     var body: some View {
         VStack(spacing: 0) {
+            ModelSettingsView(preferences: preferences).padding(12)
+            Divider()
             HStack {
                 Picker("", selection: $tab) {
                     ForEach(Tab.allCases, id: \.self) { Text($0.rawValue).tag($0) }

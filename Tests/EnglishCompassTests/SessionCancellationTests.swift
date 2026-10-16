@@ -9,6 +9,8 @@ import AssistantCore
     var delay: UInt64 = 0
     var failure: AssistantFailure?
     var receivedInstructions = ""
+    var lastRawRequest: String?
+    var lastRawResponse: String?
     func infer(text: String, action: AssistantAction, additionalInstructions: String) async throws -> ModelResult {
         requests += 1
         receivedInstructions = additionalInstructions
@@ -42,6 +44,23 @@ final class SessionCancellationTests: XCTestCase {
         XCTAssertEqual(session.message, "Clipboard has no text.")
         XCTAssertEqual(fake.requests, 0)
     }
+    @MainActor func testSuccessfulNonStreamingResultKeepsRawRequestAndResponse() async throws {
+        let name = "EnglishCompassTests.\(UUID().uuidString)", fake = FakeInference()
+        let defaults = UserDefaults(suiteName: name)!
+        defer { defaults.removePersistentDomain(forName: name) }
+        fake.lastRawRequest = "{\"stream\":false}"
+        fake.lastRawResponse = "{\"choices\":[{\"message\":{\"content\":\"Hello.\"}}]}"
+        let session = subject(defaults, fake)
+        session.input = "Hello."
+        session.process()
+        for _ in 0..<100 where session.requestStartedAt != nil {
+            try await Task.sleep(nanoseconds: 2_000_000)
+        }
+        XCTAssertEqual(session.phase, .result)
+        XCTAssertEqual(session.rawRequest, fake.lastRawRequest)
+        XCTAssertEqual(session.rawResponse, fake.lastRawResponse)
+    }
+
     @MainActor func testRequestTimingCompletesAndResetsForNewSession() async throws {
         let name = "EnglishCompassTests.\(UUID().uuidString)", fake = FakeInference()
         let defaults = UserDefaults(suiteName: name)!

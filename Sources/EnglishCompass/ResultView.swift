@@ -95,7 +95,7 @@ struct ResultView: View {
 
     private var footer: some View {
         HStack(spacing: 8) {
-            Text(CloudAPIContract.model)
+            Text(session.requestModel.rawValue)
             if let seconds = session.elapsedSeconds {
                 Text(String(format: "%.2f s", seconds)).monospacedDigit()
             } else if let started = session.requestStartedAt {

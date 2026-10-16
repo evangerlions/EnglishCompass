@@ -15,6 +15,12 @@ public struct StreamingSections {
     /// Name of the section currently being written, if any.
     public var current: String?
 
+    /// Index of the current heading inside `known`, or nil for a trailing one.
+    public func currentHeadingIndex(in known: [String]) -> Int? {
+        guard let current else { return nil }
+        return known.firstIndex { $0.caseInsensitiveCompare(current) == .orderedSame }
+    }
+
     public init() {}
 
     public mutating func ingest(_ full: String, known: [String]) {

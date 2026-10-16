@@ -3,6 +3,8 @@ import CoreFoundation
 
 public enum CloudAPIContract {
     public static let model = "qwen3.7-flash"
+    /// Output budget for every request (provider accepts [1, 131072]).
+    public static let maxTokens = 4096 * 2
     public static let endpoint = URL(string: "https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions")!
 
     public static func validateInput(_ text: String) throws {
@@ -11,12 +13,13 @@ public enum CloudAPIContract {
         guard text.unicodeScalars.count <= 16000 else { throw AssistantFailure.contextLimit }
     }
 
-    public static func request(text: String, action: AssistantAction, additionalInstructions: String, key: String) throws -> URLRequest {
-        try request(text: text, action: action, additionalInstructions: additionalInstructions, key: key, stream: false)
+    public static func request(text: String, action: AssistantAction, additionalInstructions: String, key: String,
+                               model: String = CloudAPIContract.model) throws -> URLRequest {
+        try request(text: text, action: action, additionalInstructions: additionalInstructions, key: key, stream: false, model: model)
     }
 
     public static func request(text: String, action: AssistantAction, additionalInstructions: String, key: String,
-                               stream: Bool) throws -> URLRequest {
+                               stream: Bool, model: String = CloudAPIContract.model) throws -> URLRequest {
         try validateInput(text)
         let credential = key.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !credential.isEmpty else { throw AssistantFailure.cloudKeyMissing }
@@ -30,7 +33,7 @@ public enum CloudAPIContract {
                          ["role": "user", "content": text]],
             "enable_thinking": false,
             "temperature": 0.1,
-            "max_tokens": action == .writeEnglish ? 4096 : 1024,
+            "max_tokens": maxTokens,
             "stream": stream
         ]
         if stream {

@@ -1,4 +1,5 @@
 import SwiftUI
+import AppKit
 import AssistantCore
 
 struct UnderstandingResultView: View {
@@ -15,16 +16,22 @@ struct UnderstandingResultView: View {
             } else if session.isStreaming {
                 streamingBody
             }
-            if !session.isStreaming { bottomBar }
+            // Copy is available whenever there is a finished or partial result.
+            if session.result != nil || (session.isStreaming && !streamingCopyText.isEmpty) { bottomBar }
         }
         .focusable().focusEffectDisabled().focused($keyboardFocused)
         .onAppear { keyboardFocused = true }
         .onKeyPress(.space) { session.speakCurrent(); return .handled }
     }
 
+    private var streamingCopyText: String {
+        guard let t = session.liveUnderstandSections.translation else { return "" }
+        return WritingMarkdownPayload.plainText(t)
+    }
+
     private var bottomBar: some View {
         HStack {
-            Button { session.copy() } label: {
+            Button { copyCurrent() } label: {
                 Label(session.message == "Copied." ? "Copied" : "Copy translation",
                       systemImage: session.message == "Copied." ? "checkmark" : "doc.on.doc")
             }
@@ -32,6 +39,17 @@ struct UnderstandingResultView: View {
             Spacer()
             Text("Space 朗读原文").font(.system(size: 11)).foregroundStyle(.secondary)
         }
+    }
+
+    private func copyCurrent() {
+        // During streaming copy the partial translation directly.
+        if session.isStreaming, !streamingCopyText.isEmpty {
+            NSPasteboard.general.clearContents()
+            NSPasteboard.general.setString(streamingCopyText, forType: .string)
+            session.message = "Copied."
+            return
+        }
+        session.copy()
     }
 
     @ViewBuilder
@@ -61,23 +79,27 @@ struct UnderstandingResultView: View {
                 }
                 if let notes = live.notes {
                     section(title: "讲解", systemImage: "text.book.closed") {
-                        VStack(alignment: .leading, spacing: 8) {
-                            ForEach(Array(noteItems(notes).enumerated()), id: \.offset) { _, item in
-                                HStack(alignment: .firstTextBaseline, spacing: 7) {
-                                    Circle().fill(accent.opacity(0.75)).frame(width: 4, height: 4)
-                                    Text(markdown(item)).font(.system(size: 13)).foregroundStyle(.secondary)
-                                        .fixedSize(horizontal: false, vertical: true)
-                                }
-                            }
-                        }
+                        MarkdownBody(source: notes, fontSize: 13).foregroundStyle(.secondary)
                     }
                 }
             }.padding(2)
                 .onHeightChange { contentHeight = $0 }
         }
         .onHeightChange { viewportHeight = $0 }
-        .onChange(of: contentHeight == 0 || viewportHeight == 0 ? 0 : 1, initial: true) { _, _ in
-            session.reportResultMeasure(content: contentHeight, viewport: viewportHeight)
+        .onChange(of: contentHeight) { _, _ in
+            if contentHeight > 0, viewportHeight > 0 {
+                session.reportResultMeasure(content: contentHeight, viewport: viewportHeight)
+            }
+        }
+        .onChange(of: viewportHeight) { _, _ in
+            if contentHeight > 0, viewportHeight > 0 {
+                session.reportResultMeasure(content: contentHeight, viewport: viewportHeight)
+            }
+        }
+        .onAppear {
+            if contentHeight > 0, viewportHeight > 0 {
+                session.reportResultMeasure(content: contentHeight, viewport: viewportHeight)
+            }
         }
     }
 
@@ -108,18 +130,7 @@ struct UnderstandingResultView: View {
                     let notes = notesMarkdown(result)
                     if !notes.isEmpty {
                         section(title: "讲解", systemImage: "text.book.closed") {
-                            VStack(alignment: .leading, spacing: 8) {
-                                ForEach(Array(noteItems(notes).enumerated()), id: \.offset) { _, item in
-                                    HStack(alignment: .firstTextBaseline, spacing: 7) {
-                                        Circle().fill(accent.opacity(0.75)).frame(width: 4, height: 4)
-                                        Text(markdown(item))
-                                            .font(.system(size: 13))
-                                            .foregroundStyle(.secondary)
-                                            .textSelection(.enabled)
-                                            .fixedSize(horizontal: false, vertical: true)
-                                    }
-                                }
-                            }
+                            MarkdownBody(source: notes, fontSize: 13).foregroundStyle(.secondary)
                         }
                     }
                     if !session.message.isEmpty && session.message != "Copied." {
@@ -129,8 +140,15 @@ struct UnderstandingResultView: View {
                     .onHeightChange { contentHeight = $0 }
             }
             .onHeightChange { viewportHeight = $0 }
-            .onChange(of: contentHeight == 0 || viewportHeight == 0 ? 0 : 1, initial: true) { _, _ in
-                session.reportResultMeasure(content: contentHeight, viewport: viewportHeight)
+            .onChange(of: contentHeight) { _, _ in
+                if contentHeight > 0, viewportHeight > 0 {
+                    session.reportResultMeasure(content: contentHeight, viewport: viewportHeight)
+                }
+            }
+            .onChange(of: viewportHeight) { _, _ in
+                if contentHeight > 0, viewportHeight > 0 {
+                    session.reportResultMeasure(content: contentHeight, viewport: viewportHeight)
+                }
             }
     }
 
@@ -174,15 +192,6 @@ struct UnderstandingResultView: View {
     private func notesMarkdown(_ result: ModelResult) -> String {
         if !result.summary.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty { return result.summary }
         return result.explanations.map { "- \($0)" }.joined(separator: "\n")
-    }
-
-    private func noteItems(_ source: String) -> [String] {
-        let items = source.components(separatedBy: "\n").compactMap { line -> String? in
-            let trimmed = line.trimmingCharacters(in: .whitespaces)
-            guard !trimmed.isEmpty else { return nil }
-            return trimmed.hasPrefix("- ") ? String(trimmed.dropFirst(2)) : trimmed
-        }
-        return items.isEmpty ? [source] : items
     }
 
     private func markdown(_ source: String) -> AttributedString {

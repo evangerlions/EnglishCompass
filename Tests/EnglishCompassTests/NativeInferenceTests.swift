@@ -1,4 +1,6 @@
 import Foundation
+import AppKit
+import SwiftUI
 import XCTest
 import AssistantCore
 @testable import EnglishCompass
@@ -26,6 +28,226 @@ private final class StubURLProtocol: URLProtocol {
 }
 
 final class NativeInferenceTests: XCTestCase {
+    @MainActor func testModelPresetsPersistAndReachBothTransportModes() async throws {
+        defer { clearStub() }
+        let name = "ModelSettingsTests.\(UUID().uuidString)"
+        let defaults = UserDefaults(suiteName: name)!
+        defer { defaults.removePersistentDomain(forName: name) }
+        let preferences = Preferences(defaults: defaults)
+        XCTAssertEqual(preferences.model, .flash37)
+        let inference = service()
+        for model in QwenModel.allCases {
+            preferences.model = model
+            XCTAssertEqual(Preferences(defaults: defaults).model, model)
+            inference.useModel(preferences.model)
+            StubURLProtocol.handler = { _ in
+                (401, Data("{\"error\":\"synthetic\"}".utf8))
+            }
+            func checkRequest() throws {
+                let raw = try XCTUnwrap(inference.lastRawRequest)
+                let json = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(raw.utf8)) as? [String: Any])
+                XCTAssertEqual(json["model"] as? String, model.rawValue)
+                XCTAssertEqual(json["max_tokens"] as? Int, 8192)
+                XCTAssertEqual(json["enable_thinking"] as? Bool, false)
+            }
+            for action in [AssistantAction.writeEnglish, .understandEnglish] {
+                do {
+                    _ = try await inference.infer(text: "Hi.", action: action, additionalInstructions: "")
+                    XCTFail("Expected controlled error")
+                } catch { XCTAssertEqual(error as? AssistantFailure, .cloudAuth) }
+                try checkRequest()
+                do {
+                    _ = try await inference.inferStream(text: "Hi.", action: action, additionalInstructions: "") { _ in }
+                    XCTFail("Expected controlled error")
+                } catch { XCTAssertEqual(error as? AssistantFailure, .cloudAuth) }
+                try checkRequest()
+            }
+        }
+        defaults.set("unknown-model", forKey: "qwenModel")
+        XCTAssertEqual(Preferences(defaults: defaults).model, .flash37)
+    }
+
+    @MainActor func testSessionCapturesModelAtRequestStart() async throws {
+        defer { clearStub() }
+        let name = "ModelSettingsTests.\(UUID().uuidString)"
+        let defaults = UserDefaults(suiteName: name)!
+        defer { defaults.removePersistentDomain(forName: name) }
+        let preferences = Preferences(defaults: defaults)
+        preferences.model = .plus37
+        let content = "## General\nHello.\n## Conversational\nHi.\n## Academic\nGreetings.\n## Notes\nA note."
+        let payload = String(decoding: try JSONSerialization.data(withJSONObject: ["choices": [["delta": ["content": content]]]]), as: UTF8.self)
+        StubURLProtocol.handler = { _ in
+            return (200, Data("data: \(payload)\n\ndata: [DONE]\n\n".utf8))
+        }
+        let session = AssistantSession(preferences: preferences, accessibility: AccessibilityBridge(), inference: service())
+        session.input = "Hello."; session.process()
+        preferences.model = .max38
+        for _ in 0..<200 where session.requestStartedAt != nil { try await Task.sleep(nanoseconds: 5_000_000) }
+        XCTAssertEqual(session.requestModel, .plus37)
+        XCTAssertEqual(session.result?.candidates.count, 3)
+        let json = try JSONSerialization.jsonObject(with: Data(try XCTUnwrap(session.rawRequest).utf8)) as? [String: Any]
+        XCTAssertEqual(json?["model"] as? String, QwenModel.plus37.rawValue)
+        XCTAssertEqual(session.candidateIndex, 0)
+        XCTAssertEqual(session.suggestion, "Hello.")
+    }
+
+    @MainActor func testOptionalLiveQwenPresetsSmoke() async throws {
+        guard ProcessInfo.processInfo.environment["ENGLISHCOMPASS_TEST_MODELS"] == "1",
+              let key = ProcessInfo.processInfo.environment["ENGLISHCOMPASS_TEST_KEY"], !key.isEmpty else {
+            throw XCTSkip("Preset live calls require opt-in and a test credential.")
+        }
+        let inference = InferenceService(credential: { key })
+        defer { inference.cancel() }
+        for model in QwenModel.allCases {
+            inference.useModel(model)
+            let content = try await inference.inferStream(text: "Please helps me fix this bug.",
+                action: .writeEnglish, additionalInstructions: "") { _ in }
+            let result = try CloudAPIContract.parseContent(content, action: .writeEnglish)
+            XCTAssertEqual(result.candidates.count, 3)
+            XCTAssertFalse(result.summary.isEmpty)
+            XCTAssertFalse(inference.lastRawRequest?.contains(key) == true)
+            XCTAssertTrue(inference.lastRawResponse?.contains("[DONE]") == true)
+            print("event=live_preset_smoke model=\(model.rawValue) candidates=\(result.candidates.count)")
+        }
+    }
+
+    @MainActor func testStreamPreservesWireResponseIncludingMetadataAndDone() async throws {
+        defer { clearStub() }
+        let wire = """
+        data: {"id":"synthetic-completion","choices":[{"index":0,"delta":{"role":"assistant","content":"Hello **world**."},"finish_reason":null}]}
+
+        data: {"choices":[{"index":0,"delta":{},"finish_reason":"stop"}]}
+
+        data: {"choices":[],"usage":{"prompt_tokens":10,"completion_tokens":4}}
+
+        data: [DONE]
+
+        """
+        StubURLProtocol.handler = { _ in (200, Data(wire.utf8)) }
+        let inference = service()
+        var deltas = ""
+        let content = try await inference.inferStream(text: "Hello world.", action: .writeEnglish,
+                                                       additionalInstructions: "") { delta in
+            deltas += delta
+            XCTAssertTrue(inference.lastRawResponse?.hasPrefix("data:") == true,
+                          "Raw response must be available before the UI receives a delta")
+        }
+        XCTAssertEqual(content, "Hello **world**.")
+        XCTAssertEqual(deltas, content)
+        XCTAssertEqual(inference.lastRawResponse, wire)
+        XCTAssertTrue(inference.lastRawResponse?.contains("completion_tokens") == true)
+        XCTAssertTrue(inference.lastRawResponse?.contains("[DONE]") == true)
+    }
+
+    @MainActor func testSuccessfulStreamSessionPublishesRawResponseAndClearsItOnNewSession() async throws {
+        defer { clearStub() }
+        let content = "## General\nHello.\n\n## Conversational\nHi.\n\n## Academic\nGreetings.\n\n## Notes\nA short note."
+        let event: [String: Any] = ["choices": [["index": 0, "delta": ["content": content]]]]
+        let payload = String(decoding: try JSONSerialization.data(withJSONObject: event), as: UTF8.self)
+        let wire = "data: \(payload)\n\ndata: [DONE]\n\n"
+        StubURLProtocol.handler = { _ in (200, Data(wire.utf8)) }
+        let name = "EnglishCompassTests.\(UUID().uuidString)"
+        let defaults = UserDefaults(suiteName: name)!
+        defer { defaults.removePersistentDomain(forName: name) }
+        let session = AssistantSession(preferences: Preferences(defaults: defaults),
+                                       accessibility: AccessibilityBridge(), inference: service())
+        session.input = "Hello."
+        session.process()
+        for _ in 0..<200 where session.requestStartedAt != nil {
+            try await Task.sleep(nanoseconds: 5_000_000)
+        }
+        XCTAssertEqual(session.phase, .result)
+        XCTAssertNil(session.requestStartedAt, "The actual request must have completed")
+        XCTAssertEqual(session.result?.candidates, ["Hello.", "Hi.", "Greetings."])
+        XCTAssertEqual(session.rawResponse, wire, "Valid responses must not leave the debug sheet empty")
+        XCTAssertNotNil(session.rawRequest)
+        XCTAssertFalse(try XCTUnwrap(session.rawRequest).contains("synthetic-key"))
+        XCTAssertEqual(String(JSONDebugView.highlight(try XCTUnwrap(session.rawResponse)).characters), wire)
+        session.begin(.understandEnglish, capture: false)
+        XCTAssertNil(session.rawResponse, "A new request must not show the previous response")
+        XCTAssertNil(session.rawRequest)
+    }
+
+    @MainActor func testMalformedStreamSessionKeepsOriginalRawWireBody() async throws {
+        defer { clearStub() }
+        let wire = "data: {\"choices\":[{\"delta\":{\"content\":\"An unsectioned answer.\"}}]}\n\ndata: [DONE]\n\n"
+        StubURLProtocol.handler = { _ in (200, Data(wire.utf8)) }
+        let name = "EnglishCompassTests.\(UUID().uuidString)"
+        let defaults = UserDefaults(suiteName: name)!
+        defer { defaults.removePersistentDomain(forName: name) }
+        let session = AssistantSession(preferences: Preferences(defaults: defaults),
+                                       accessibility: AccessibilityBridge(), inference: service())
+        session.input = "Hello."
+        session.process()
+        for _ in 0..<200 where session.requestStartedAt != nil {
+            try await Task.sleep(nanoseconds: 5_000_000)
+        }
+        XCTAssertNil(session.requestStartedAt)
+        XCTAssertEqual(session.phase, .result)
+        XCTAssertEqual(session.rawResponse, wire, "Fallback must not replace raw SSE with the extracted answer")
+    }
+
+    @MainActor func testStreamHTTPErrorBodyRemainsInspectable() async throws {
+        defer { clearStub() }
+        let wire = "{\"error\":{\"code\":\"invalid_api_key\",\"message\":\"Synthetic auth failure\"}}"
+        StubURLProtocol.handler = { _ in (401, Data(wire.utf8)) }
+        let inference = service()
+        do {
+            _ = try await inference.inferStream(text: "Hello.", action: .writeEnglish,
+                                                additionalInstructions: "") { _ in XCTFail("No content delta expected") }
+            XCTFail("Expected auth failure")
+        } catch { XCTAssertEqual(error as? AssistantFailure, .cloudAuth) }
+        XCTAssertEqual(inference.lastRawResponse, wire)
+    }
+
+    @MainActor func testOptionalLiveStreamingRawResponseSmoke() async throws {
+        guard let key = ProcessInfo.processInfo.environment["ENGLISHCOMPASS_TEST_KEY"], !key.isEmpty else {
+            throw XCTSkip("Live smoke requires an explicitly supplied test credential.")
+        }
+        let name = "EnglishCompassTests.\(UUID().uuidString)"
+        let defaults = UserDefaults(suiteName: name)!
+        defer { defaults.removePersistentDomain(forName: name) }
+        let session = AssistantSession(preferences: Preferences(defaults: defaults),
+                                       accessibility: AccessibilityBridge(),
+                                       inference: InferenceService(credential: { key }))
+        for (action, text) in [(AssistantAction.writeEnglish, "Please helps me fix this bug."),
+                               (.understandEnglish, "Do not delete the file.")] {
+            session.begin(action, capture: false)
+            session.input = text
+            session.process()
+            for _ in 0..<600 where session.requestStartedAt != nil {
+                try await Task.sleep(nanoseconds: 100_000_000)
+            }
+            XCTAssertNil(session.requestStartedAt, "Live request must complete within smoke timeout")
+            XCTAssertEqual(session.phase, .result)
+            let raw = try XCTUnwrap(session.rawResponse)
+            XCTAssertTrue(raw.hasPrefix("data:"))
+            XCTAssertTrue(raw.contains("[DONE]"))
+            XCTAssertTrue(raw.contains("usage"))
+            XCTAssertFalse(raw.contains(key))
+            XCTAssertNotNil(session.result)
+            if action == .writeEnglish { XCTAssertEqual(session.result?.candidates.count, 3) }
+            else { XCTAssertEqual(session.result?.candidates.count, 1) }
+            XCTAssertEqual(String(JSONDebugView.highlight(raw).characters), raw)
+            if action == .writeEnglish,
+               let path = ProcessInfo.processInfo.environment["ENGLISHCOMPASS_RAW_PREVIEW"] {
+                // Opt-in local verification of the exact sheet the user sees.
+                // No headers/keys, and no persistent snapshot during normal tests.
+                let view = NSHostingView(rootView: RequestDebugSheet(request: session.rawRequest, response: raw))
+                view.frame = NSRect(x: 0, y: 0, width: 680, height: 560)
+                view.layoutSubtreeIfNeeded()
+                try await Task.sleep(nanoseconds: 100_000_000)
+                view.layoutSubtreeIfNeeded()
+                let bitmap = try XCTUnwrap(view.bitmapImageRepForCachingDisplay(in: view.bounds))
+                view.cacheDisplay(in: view.bounds, to: bitmap)
+                let png = try XCTUnwrap(bitmap.representation(using: .png, properties: [:]))
+                try png.write(to: URL(fileURLWithPath: path))
+            }
+            print("event=live_raw_response_smoke action=\(action.rawValue) bytes=\(raw.utf8.count)")
+        }
+        session.cancel()
+    }
+
     @MainActor func testCredentialReadOnceAcrossActionsAndUpdatedWithoutRereadingKeychain() async {
         defer { clearStub() }
         var reads = 0

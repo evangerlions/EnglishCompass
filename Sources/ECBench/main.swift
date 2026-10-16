@@ -31,6 +31,12 @@ struct ECBench {
     static func main() async {
         let args = Array(CommandLine.arguments.dropFirst())
         let probeOnly = args.first == "probe"
+        if args.first == "smoke" {
+            guard let k = ProcessInfo.processInfo.environment["BAILIAN_API_KEY"]?
+                .trimmingCharacters(in: .whitespacesAndNewlines), !k.isEmpty else {
+                FileHandle.standardError.write(Data("error: BAILIAN_API_KEY not set\n".utf8)); exit(2) }
+            exit(await Smoke.run(key: k))
+        }
         if args.first == "parsefile" {
             let path = args.count > 1 ? args[1] : "/tmp/ec-formatcheck.md"
             let action: AssistantAction = args.count > 2 && args[2] == "understand" ? .understandEnglish : .writeEnglish
@@ -209,7 +215,7 @@ struct ECBench {
                          stream: Bool, strict: Bool, run: Int = 0, tag: String = "write") async -> Row {
             let mode = stream ? "stream" : "nonstream"
             let sys = (try? CloudAPIContract.prompt(action: action, additionalInstructions: "")) ?? ""
-            let maxTokens = action == .writeEnglish ? 4096 : 1024
+            let maxTokens = CloudAPIContract.maxTokens
             var body: [String: Any] = [
                 "model": model,
                 "messages": [["role": "system", "content": sys], ["role": "user", "content": text]],
@@ -357,6 +363,77 @@ struct ECBench {
             } catch {
                 print("request error: \(error)")
             }
+        }
+    }
+
+    /// `smoke`: end-to-end check of the exact app path for every tricky input:
+    /// streaming request → join SSE deltas → CloudAPIContract.parseContent.
+    /// Exits non-zero if any case fails, and dumps failing content to /tmp.
+    enum Smoke {
+        static let cases: [(name: String, action: AssistantAction, text: String)] = [
+            ("plain-en", .writeEnglish, "Can you help me check this bug quickly?"),
+            ("zh-markdown-headings", .writeEnglish, """
+            ### 补充一个有意思的观察
+
+            这个规则的不对称性完全来自：
+            ✅A 拿到 4 胜直接夺冠；
+            ⚠️B 拿到 4 胜**不是冠军**，仅仅开启抢 5，B 必须再拿下一局到 5 胜。
+            等于 B 的"赛点门槛"更高。
+
+            要不要我再换一个变体规则算概率：改成**B 拿到 4 胜直接赢；A 拿到 4 胜之后才切换抢 5**，对比一下反转之后的胜率？
+            """),
+            ("h2-in-input", .writeEnglish, "## 背景\n我们需要尽快修复登录白屏问题。\n## 方案\n先回滚再定位。"),
+            ("numbered-list", .writeEnglish, "1. 先删掉无用的测试文件\n2. 切到 47.5.0 分支最新代码\n3. 重新编译"),
+            ("code-and-path", .writeEnglish, "把 `fetchUser()` 改成异步，日志在 /var/log/app.log 里"),
+            ("understand-short", .understandEnglish, "I'd rather we didn't roll this out until the edge cases are sorted out."),
+            ("understand-markdown", .understandEnglish, "## Notes\n- **Ship** it after the retry fix lands.\n- Keep `v2` behind a flag.")
+        ]
+
+        static func run(key: String) async -> Int32 {
+            var failures = 0
+            for c in cases {
+                let start = Date()
+                do {
+                    let content = try await stream(text: c.text, action: c.action, key: key)
+                    let ms = Int(Date().timeIntervalSince(start) * 1000)
+                    do {
+                        let r = try CloudAPIContract.parseContent(content, action: c.action)
+                        print("PASS \(c.name) \(ms)ms cards=\(r.candidates.count) bodyChars=\(r.summary.count)")
+                    } catch {
+                        failures += 1
+                        let path = "/tmp/ec-smoke-\(c.name).md"
+                        try? content.write(toFile: path, atomically: true, encoding: .utf8)
+                        print("FAIL \(c.name) \(ms)ms parse=\(error) content=\(path)")
+                    }
+                } catch {
+                    failures += 1
+                    print("FAIL \(c.name) transport=\(error)")
+                }
+            }
+            print(failures == 0 ? "SMOKE OK (\(cases.count) cases)" : "SMOKE FAILED \(failures)/\(cases.count)")
+            return failures == 0 ? 0 : 1
+        }
+
+        /// Same request builder and SSE handling the app uses.
+        static func stream(text: String, action: AssistantAction, key: String) async throws -> String {
+            let req = try CloudAPIContract.request(text: text, action: action, additionalInstructions: "",
+                                                   key: key, stream: true)
+            let (bytes, response) = try await URLSession(configuration: .ephemeral).bytes(for: req)
+            guard (response as? HTTPURLResponse)?.statusCode == 200 else {
+                throw AssistantFailure.cloudUnavailable
+            }
+            var content = ""
+            for try await line in bytes.lines {
+                guard line.hasPrefix("data:") else { continue }
+                let payload = line.dropFirst(5).trimmingCharacters(in: .whitespaces)
+                guard payload != "[DONE]", let data = payload.data(using: .utf8),
+                      let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+                      let choices = obj["choices"] as? [[String: Any]],
+                      let delta = choices.first?["delta"] as? [String: Any],
+                      let piece = delta["content"] as? String else { continue }
+                content += piece
+            }
+            return content
         }
     }
 

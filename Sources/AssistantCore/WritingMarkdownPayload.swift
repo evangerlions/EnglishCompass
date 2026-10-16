@@ -8,7 +8,7 @@ import Foundation
 /// is never used for copy, so its exact shape does not matter. This keeps a
 /// response valid even when the provider reorders, merges or truncates the
 /// explanatory sections.
-enum WritingMarkdownPayload {
+public enum WritingMarkdownPayload {
     static let answerHeadings = ["General", "Conversational", "Academic"]
 
     static func parse(_ content: String) throws -> ModelResult {
@@ -18,7 +18,7 @@ enum WritingMarkdownPayload {
             throw AssistantFailure.invalidResult
         }
 
-        // Split into sections by any level-2 heading.
+        // Split into sections by our fixed headings only.
         var answerBodies: [String: String] = [:]
         var bodySections: [(heading: String, text: String)] = []
         var current: String?
@@ -83,17 +83,16 @@ enum WritingMarkdownPayload {
         heading(line, candidates: answerHeadings)
     }
 
-    /// Notes/Summary (and any unknown heading) are recognized so their text is
-    /// routed to the body instead of rejected.
+    /// Section boundaries are ONLY our fixed names. Any other heading (for
+    /// example a `### Background` the user wrote and the model translated) is
+    /// ordinary content of the current section, never a new section.
     private static func otherHeading(_ line: String) -> String? {
-        let trimmed = line.trimmingCharacters(in: .whitespaces)
-        guard trimmed.hasPrefix("##") else { return nil }
-        let title = String(trimmed.drop(while: { $0 == "#" })).trimmingCharacters(in: .whitespaces)
-        guard !title.isEmpty else { return nil }
-        return answerHeadings.contains(where: { $0.caseInsensitiveCompare(title) == .orderedSame }) ? nil : title
+        heading(line, candidates: bodyHeadings)
     }
 
-    private static func heading(_ line: String, candidates: [String]) -> String? {
+    static let bodyHeadings = ["Notes", "Summary"]
+
+    static func heading(_ line: String, candidates: [String]) -> String? {
         let trimmed = line.trimmingCharacters(in: .whitespaces)
         guard trimmed.hasPrefix("##") else { return nil }
         let title = String(trimmed.drop(while: { $0 == "#" })).trimmingCharacters(in: .whitespaces)
@@ -102,7 +101,7 @@ enum WritingMarkdownPayload {
 
     /// Strips inline markup (`**`, `` ` ``, links) for copy and replacement while
     /// keeping line breaks, blank lines and list markers exactly as written.
-    static func plainText(_ markdown: String) -> String {
+    public static func plainText(_ markdown: String) -> String {
         do {
             let attributed = try AttributedString(markdown: markdown,
                                                   options: .init(interpretedSyntax: .inlineOnlyPreservingWhitespace))

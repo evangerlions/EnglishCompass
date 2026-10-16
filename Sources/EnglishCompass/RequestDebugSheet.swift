@@ -2,8 +2,8 @@ import SwiftUI
 import AppKit
 
 /// Displays the exact request body (never headers) and provider response for the
-/// current inference. Request JSON receives syntax coloring; Markdown response is
-/// shown as monospaced source so the wire format remains inspectable.
+/// current inference. JSON bodies and raw SSE event payloads receive syntax
+/// coloring; copying preserves the original captured response bytes.
 struct RequestDebugSheet: View {
     let request: String?
     let response: String?

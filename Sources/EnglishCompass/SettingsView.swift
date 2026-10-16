@@ -157,16 +157,9 @@ struct SettingsView: View {
     private var modelContent: some View {
         VStack(alignment: .leading, spacing: 20) {
             surface {
-                HStack {
-                    VStack(alignment: .leading, spacing: 6) {
-                        Text("Qwen3.7 Flash").font(.system(size: 17, weight: .semibold))
-                        Text("Alibaba Cloud Bailian / Beijing").font(.system(size: 12)).foregroundStyle(.secondary)
-                    }
-                    Spacer()
-                    Text("Non-thinking").font(.system(size: 11, weight: .medium)).foregroundStyle(accent)
-                        .padding(.horizontal, 10).padding(.vertical, 6)
-                        .background(accent.opacity(0.08), in: Capsule())
-                }
+                ModelSettingsView(preferences: preferences)
+                Text("Alibaba Cloud Bailian / Beijing").font(.system(size: 12)).foregroundStyle(.secondary)
+                    .padding(.top, 12)
             }
             surface { CloudSettingsView(onKeySaved: onKeySaved) }
             Label("Your key. Your usage.", systemImage: "key")
