@@ -30,7 +30,10 @@ final class PanelSizingTests: XCTestCase {
     }
 
     func testContentOverMaximumSettlesAtMaximumAndStopsResizing() {
-        XCTAssertEqual(settle(content: 2000, start: 470), [PanelSizing.maxResultHeight])
+        // Keep the screen cap above the panel cap so this tests the latter.
+        let screenHeight = PanelSizing.maxResultHeight + 200
+        XCTAssertEqual(settle(content: 2000, start: 470, screen: screenHeight),
+                       [PanelSizing.maxResultHeight])
     }
 
     func testScreenLimitIsRespected() {
