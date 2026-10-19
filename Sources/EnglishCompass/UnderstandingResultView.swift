@@ -85,6 +85,7 @@ struct UnderstandingResultView: View {
             }.padding(2)
                 .onHeightChange { contentHeight = $0 }
         }
+        .scrollIndicators(session.resultScrollIndicatorVisibility)
         .onHeightChange { viewportHeight = $0 }
         .onChange(of: contentHeight) { _, _ in
             if contentHeight > 0, viewportHeight > 0 {
@@ -139,6 +140,7 @@ struct UnderstandingResultView: View {
                 }.padding(2)
                     .onHeightChange { contentHeight = $0 }
             }
+            .scrollIndicators(session.resultScrollIndicatorVisibility)
             .onHeightChange { viewportHeight = $0 }
             .onChange(of: contentHeight) { _, _ in
                 if contentHeight > 0, viewportHeight > 0 {

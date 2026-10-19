@@ -21,6 +21,15 @@ import AssistantCore
 
 final class ResultInteractionTests: XCTestCase {
     private var suites: [String] = []
+    @MainActor func testGrowingResultUsesNeverInsteadOfMouseOverridableHidden() {
+        let session = makeSession()
+        XCTAssertEqual(session.resultScrollIndicatorVisibility, .never)
+        session.showsResultScrollIndicators = true
+        XCTAssertEqual(session.resultScrollIndicatorVisibility, .automatic)
+        session.showsResultScrollIndicators = false
+        XCTAssertEqual(session.resultScrollIndicatorVisibility, .never)
+    }
+
     override func tearDown() {
         for suite in suites { UserDefaults(suiteName: suite)?.removePersistentDomain(forName: suite) }
         suites.removeAll()

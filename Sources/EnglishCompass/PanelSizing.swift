@@ -28,6 +28,14 @@ enum PanelSizing {
         abs(target - current) > tolerance
     }
 
+    /// Overflow during a pending window growth is temporary, not scrollable UI.
+    static func showsResultScrollIndicators(content: CGFloat, viewport: CGFloat,
+                                            panelHeight: CGFloat, screenHeight: CGFloat) -> Bool {
+        guard content > 0, viewport > 0 else { return false }
+        let cap = max(minResultHeight, min(maxResultHeight, screenHeight - 40))
+        return panelHeight >= cap - tolerance && content > viewport + tolerance
+    }
+
     /// Fixed chrome at the current height. The scroll viewport is measured for
     /// that exact height, so their difference is the header/buttons/padding.
     static func chrome(panelHeight: CGFloat, viewport: CGFloat) -> CGFloat {

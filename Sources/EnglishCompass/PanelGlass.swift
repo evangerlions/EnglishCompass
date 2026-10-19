@@ -32,6 +32,7 @@ final class PanelAutoFitter {
             DispatchQueue.main.async {
                 guard let self, self.session.phase == phase, phase != .result else { return }
                 self.cancelSettle()
+                self.session.showsResultScrollIndicators = false
                 // Processing/error have no growing content; reset to the compact height.
                 if phase != .input { self.resizePanel(to: PanelSizing.defaultHeight) }
             }
@@ -44,6 +45,17 @@ final class PanelAutoFitter {
 
     private func fitResult() {
         guard session.phase == .result else { return }
+        if let panel, let measure = session.resultMeasure {
+            let screen = (panel.screen ?? NSScreen.main)?.visibleFrame.height ?? 800
+            let visible = PanelSizing.showsResultScrollIndicators(
+                content: measure.content, viewport: measure.viewport,
+                panelHeight: currentHeight, screenHeight: screen)
+            if visible != session.showsResultScrollIndicators {
+                session.showsResultScrollIndicators = visible
+            }
+        } else {
+            session.showsResultScrollIndicators = false
+        }
         fit(session.resultMeasure, minHeight: PanelSizing.minResultHeight,
             maxHeight: PanelSizing.maxResultHeight)
     }

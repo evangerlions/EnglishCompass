@@ -23,6 +23,12 @@ final class AssistantSession: ObservableObject {
     struct ResultMeasure: Equatable { var content: CGFloat; var viewport: CGFloat }
     @Published var resultMeasure: ResultMeasure?
     @Published var inputMeasure: ResultMeasure?
+    /// Set by the window fitter only after the result viewport reaches its cap.
+    @Published var showsResultScrollIndicators = false
+    // Unlike .hidden, .never also suppresses macOS mouse-driven scrollers.
+    var resultScrollIndicatorVisibility: ScrollIndicatorVisibility {
+        showsResultScrollIndicators ? .automatic : .never
+    }
     /// Partial Markdown while streaming; the result views render it live. Cleared
     /// when the finished payload is strictly parsed into `result`.
     @Published var streamingMarkdown: String?

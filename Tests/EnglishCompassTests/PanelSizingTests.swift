@@ -49,4 +49,29 @@ final class PanelSizingTests: XCTestCase {
     func testChromeIsTheDifferenceBetweenPanelAndViewport() {
         XCTAssertEqual(PanelSizing.chrome(panelHeight: 470, viewport: 360), 110)
     }
+
+    func testIndicatorsStayHiddenWhileWindowCanGrow() {
+        XCTAssertFalse(PanelSizing.showsResultScrollIndicators(
+            content: 800, viewport: 300, panelHeight: 470, screenHeight: 1000))
+    }
+
+    func testIndicatorsAppearAtScreenCapOnlyWithRealOverflow() {
+        XCTAssertTrue(PanelSizing.showsResultScrollIndicators(
+            content: 1200, viewport: 850, panelHeight: 960, screenHeight: 1000))
+        XCTAssertFalse(PanelSizing.showsResultScrollIndicators(
+            content: 850, viewport: 850, panelHeight: 960, screenHeight: 1000))
+        XCTAssertFalse(PanelSizing.showsResultScrollIndicators(
+            content: 853, viewport: 850, panelHeight: 960, screenHeight: 1000))
+    }
+
+    func testIndicatorsRespectPanelCapOnTallScreens() {
+        XCTAssertTrue(PanelSizing.showsResultScrollIndicators(
+            content: 2000, viewport: 1210, panelHeight: PanelSizing.maxResultHeight,
+            screenHeight: 2000))
+    }
+
+    func testIndicatorsStayHiddenForUnmeasuredViewport() {
+        XCTAssertFalse(PanelSizing.showsResultScrollIndicators(
+            content: 2000, viewport: 0, panelHeight: 960, screenHeight: 1000))
+    }
 }

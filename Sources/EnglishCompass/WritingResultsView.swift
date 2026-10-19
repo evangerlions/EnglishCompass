@@ -41,7 +41,7 @@ struct WritingResultsView: View {
                     .onHeightChange { contentHeight = $0 }
                 }
                 .padding(.horizontal, -14)
-                .scrollIndicators(.automatic)
+                .scrollIndicators(session.resultScrollIndicatorVisibility)
                 .onHeightChange { viewportHeight = $0 }
                 // Report on EVERY size change, not just when both become
                 // non-zero: during streaming the content keeps growing while the
