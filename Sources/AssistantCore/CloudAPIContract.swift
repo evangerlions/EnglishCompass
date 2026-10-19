@@ -21,6 +21,15 @@ public enum CloudAPIContract {
     public static func request(text: String, action: AssistantAction, additionalInstructions: String, key: String,
                                stream: Bool, model: String = CloudAPIContract.model) throws -> URLRequest {
         try validateInput(text)
+        return try makeRequest(messages: [
+            ["role": "system", "content": try systemPrompt(action: action, additionalInstructions: additionalInstructions)],
+            ["role": "user", "content": text]
+        ], key: key, stream: stream, model: model)
+    }
+
+    /// Shared HTTP envelope; each caller owns its prompt and input validation.
+    static func makeRequest(messages: [[String: String]], key: String,
+                            stream: Bool, model: String) throws -> URLRequest {
         let credential = key.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !credential.isEmpty else { throw AssistantFailure.cloudKeyMissing }
         guard credential.utf8.count <= 4096,
@@ -29,8 +38,7 @@ public enum CloudAPIContract {
         }
         var body: [String: Any] = [
             "model": model,
-            "messages": [["role": "system", "content": try systemPrompt(action: action, additionalInstructions: additionalInstructions)],
-                         ["role": "user", "content": text]],
+            "messages": messages,
             "enable_thinking": false,
             "temperature": 0.1,
             "max_tokens": maxTokens,

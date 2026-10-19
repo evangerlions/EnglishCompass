@@ -15,6 +15,7 @@ final class PanelAutoFitter {
     private var phaseObservation: AnyCancellable?
     private var measureObservation: AnyCancellable?
     private var inputMeasureObservation: AnyCancellable?
+    private var questionObservation: AnyCancellable?
     private var currentHeight: CGFloat = 0
     /// Coalesces rapid measurements. A resize is applied only after the measured
     /// target has stayed unchanged for `settleDelay`, so intermediate layout
@@ -41,6 +42,18 @@ final class PanelAutoFitter {
             .sink { [weak self] _ in DispatchQueue.main.async { self?.fitResult() } }
         inputMeasureObservation = session.$inputMeasure
             .sink { [weak self] _ in DispatchQueue.main.async { self?.fitInput() } }
+        questionObservation = session.$isQuestionOpen
+            .sink { [weak self] _ in DispatchQueue.main.async { self?.updateQuestionLayout() } }
+    }
+
+    private func updateQuestionLayout() {
+        guard let panel else { return }
+        cancelSettle()
+        let bounds = (panel.screen ?? NSScreen.main)?.visibleFrame ?? panel.frame
+        session.questionUsesOverlay = PanelSizing.questionUsesOverlay(screenWidth: bounds.width)
+        resizePanel(to: session.isQuestionOpen ? max(currentHeight, PanelSizing.minQuestionHeight) : currentHeight)
+        fitResult()
+        fitInput()
     }
 
     private func fitResult() {
@@ -76,7 +89,8 @@ final class PanelAutoFitter {
         // viewport == content and the target equals the current height.
         let chrome = PanelSizing.chrome(panelHeight: currentHeight, viewport: measure.viewport)
         let target = PanelSizing.height(scrollContent: measure.content, chrome: chrome, screenHeight: screen,
-                                        minHeight: minHeight, maxHeight: maxHeight)
+                                        minHeight: session.isQuestionOpen ? max(minHeight, PanelSizing.minQuestionHeight) : minHeight,
+                                        maxHeight: maxHeight)
         guard PanelSizing.needsResize(from: currentHeight, to: target) else {
             cancelSettle()
             return
@@ -110,8 +124,10 @@ final class PanelAutoFitter {
         let bounds = (panel.screen ?? NSScreen.main)?.visibleFrame ?? panel.frame
         let clamped = min(height, bounds.height - 40)
         let top = panel.frame.maxY
-        panel.setContentSize(NSSize(width: PanelSizing.width, height: clamped))
-        panel.setFrameOrigin(NSPoint(x: panel.frame.minX, y: max(bounds.minY, top - panel.frame.height)))
+        let width = PanelSizing.windowWidth(questionOpen: session.isQuestionOpen, screenWidth: bounds.width)
+        panel.setContentSize(NSSize(width: width, height: clamped))
+        let x = max(bounds.minX, min(panel.frame.minX, bounds.maxX - panel.frame.width))
+        panel.setFrameOrigin(NSPoint(x: x, y: max(bounds.minY, top - panel.frame.height)))
         currentHeight = clamped
     }
 }

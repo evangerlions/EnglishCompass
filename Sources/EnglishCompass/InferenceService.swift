@@ -23,6 +23,8 @@ protocol InferencePerforming: AnyObject {
     func cancel()
     func prepareCredential()
     func useModel(_ model: QwenModel)
+    func answerQuestion(context: String, messages: [QuestionMessage],
+                        onDelta: @escaping @MainActor (String) -> Void) async throws -> String
 }
 
 extension InferencePerforming {
@@ -35,6 +37,10 @@ extension InferencePerforming {
     }
     func prepareCredential() {}
     func useModel(_ model: QwenModel) {}
+    func answerQuestion(context: String, messages: [QuestionMessage],
+                        onDelta: @escaping @MainActor (String) -> Void) async throws -> String {
+        throw AssistantFailure.cloudUnavailable
+    }
 }
 
 @MainActor
@@ -155,12 +161,29 @@ final class InferenceService: InferencePerforming {
         let request = try CloudAPIContract.request(text: text, action: action,
                                                    additionalInstructions: additionalInstructions,
                                                    key: key, stream: true, model: selectedModel.rawValue)
+        cachedCredential = key
+        return try await performStream(request: request, action: action.rawValue, onDelta: onDelta)
+    }
+
+    func answerQuestion(context: String, messages: [QuestionMessage],
+                        onDelta: @escaping @MainActor (String) -> Void) async throws -> String {
+        try Task.checkCancellation()
+        guard operationID == nil else { throw AssistantFailure.cloudUnavailable }
+        try QuestionAPIContract.validate(context: context, messages: messages)
+        let key = try cachedCredential ?? credential()
+        let request = try QuestionAPIContract.request(context: context, messages: messages,
+                                                       key: key, model: selectedModel.rawValue)
+        cachedCredential = key
+        return try await performStream(request: request, action: "question", onDelta: onDelta)
+    }
+
+    private func performStream(request: URLRequest, action: String,
+                               onDelta: @escaping @MainActor (String) -> Void) async throws -> String {
         lastRawRequest = request.httpBody.flatMap { String(data: $0, encoding: .utf8) }
         lastRawResponse = nil
-        cachedCredential = key
         let id = UUID()
         operationID = id
-        Diagnostics.event("cloud_request_started", action: action.rawValue, mode: "stream")
+        Diagnostics.event("cloud_request_started", action: action, mode: "stream")
 
         let task = Task { [session] () -> String in
             let (bytes, response) = try await session.bytes(for: request)
@@ -245,14 +268,14 @@ final class InferenceService: InferencePerforming {
             } onCancel: { task.cancel() }
             try Task.checkCancellation()
             guard operationID == id else { throw AssistantFailure.cancelled }
-            Diagnostics.event("cloud_request_success", action: action.rawValue, mode: "stream")
+            Diagnostics.event("cloud_request_success", action: action, mode: "stream")
             return content
         } catch {
             if Task.isCancelled || operationID != id || (error as? URLError)?.code == .cancelled || error is CancellationError {
-                Diagnostics.event("cloud_request_cancelled", action: action.rawValue)
+                Diagnostics.event("cloud_request_cancelled", action: action)
                 throw AssistantFailure.cancelled
             }
-            Diagnostics.event("cloud_request_failed", action: action.rawValue)
+            Diagnostics.event("cloud_request_failed", action: action)
             if let failure = error as? AssistantFailure { throw failure }
             if (error as? URLError)?.code == .timedOut { throw AssistantFailure.timedOut }
             throw AssistantFailure.cloudUnavailable

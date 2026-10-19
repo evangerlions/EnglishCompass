@@ -28,6 +28,33 @@ private final class StubURLProtocol: URLProtocol {
 }
 
 final class NativeInferenceTests: XCTestCase {
+    @MainActor func testQuestionStreamsMarkdownAndReusesCachedCredential() async throws {
+        defer { clearStub() }
+        let configuration = URLSessionConfiguration.ephemeral
+        configuration.protocolClasses = [StubURLProtocol.self]
+        var reads = 0
+        let inference = InferenceService(session: URLSession(configuration: configuration),
+                                         credential: { reads += 1; return "synthetic-key" })
+        inference.useModel(.plus37)
+        let markdown = "## Grammar\n\nUse **inertial scrolling**."
+        let payload = String(decoding: try JSONSerialization.data(withJSONObject:
+            ["choices": [["delta": ["content": markdown]]]]), as: UTF8.self)
+        StubURLProtocol.handler = { _ in
+            (200, Data("data: \(payload)\n\ndata: [DONE]\n\n".utf8))
+        }
+        for _ in 0..<2 {
+            var streamed = ""
+            let answer = try await inference.answerQuestion(context: "Original sentence",
+                messages: [.init(role: .user, content: "Why?")]) { streamed += $0 }
+            XCTAssertEqual(answer, markdown)
+            XCTAssertEqual(streamed, markdown)
+        }
+        XCTAssertEqual(reads, 1)
+        let body = try XCTUnwrap(inference.lastRawRequest)
+        XCTAssertTrue(body.contains(QwenModel.plus37.rawValue))
+        XCTAssertFalse(body.contains("synthetic-key"))
+    }
+
     @MainActor func testModelPresetsPersistAndReachBothTransportModes() async throws {
         defer { clearStub() }
         let name = "ModelSettingsTests.\(UUID().uuidString)"

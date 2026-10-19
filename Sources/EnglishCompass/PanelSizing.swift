@@ -3,6 +3,17 @@ import SwiftUI
 /// Result panel sizing: grow with content, never past a maximum, then scroll.
 enum PanelSizing {
     static let width: CGFloat = 540
+    static let questionSidebarWidth: CGFloat = 360
+    static let minQuestionHeight: CGFloat = 480
+
+    static func questionUsesOverlay(screenWidth: CGFloat) -> Bool {
+        screenWidth - 40 < width + questionSidebarWidth + 1
+    }
+
+    static func windowWidth(questionOpen: Bool, screenWidth: CGFloat) -> CGFloat {
+        questionOpen && !questionUsesOverlay(screenWidth: screenWidth)
+            ? width + questionSidebarWidth + 1 : width
+    }
     static let minResultHeight: CGFloat = 220
     static let maxResultHeight: CGFloat = 660 * 2
     /// Input editor: compact when empty, grows with what is typed, then scrolls.

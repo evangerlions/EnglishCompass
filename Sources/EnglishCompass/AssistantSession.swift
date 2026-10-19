@@ -25,6 +25,9 @@ final class AssistantSession: ObservableObject {
     @Published var inputMeasure: ResultMeasure?
     /// Set by the window fitter only after the result viewport reaches its cap.
     @Published var showsResultScrollIndicators = false
+    @Published var isQuestionOpen = false
+    @Published var questionUsesOverlay = false
+    let questions: QuestionSession
     // Unlike .hidden, .never also suppresses macOS mouse-driven scrollers.
     var resultScrollIndicatorVisibility: ScrollIndicatorVisibility {
         showsResultScrollIndicators ? .automatic : .never
@@ -60,6 +63,7 @@ final class AssistantSession: ObservableObject {
     init(preferences: Preferences, accessibility: AccessibilityBridge, inference: any InferencePerforming,
          speech: SpeechService? = nil) {
         self.preferences = preferences; self.accessibility = accessibility; self.inference = inference
+        self.questions = QuestionSession(inference: inference)
         self.requestModel = preferences.model
         self.speech = speech ?? SpeechService(preferences: preferences)
     }
@@ -125,6 +129,7 @@ final class AssistantSession: ObservableObject {
     }
     func begin(_ action: AssistantAction, capture: Bool = true, completion: @escaping (CGRect?) -> Void = { _ in }) {
         cancel(close: false)
+        questions.reset()
         self.action = action
         phase = .input; input = ""; suggestion = ""; result = nil; candidateIndex = nil
         resultMeasure = nil; inputMeasure = nil; streamingMarkdown = nil
@@ -171,6 +176,8 @@ final class AssistantSession: ObservableObject {
     }
     func process() {
         guard phase != .processing, !input.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
+        closeQuestions()
+        questions.reset()
         if let target, !input.utf16.elementsEqual(target.snapshot.input.utf16) {
             self.target = nil
             sourceName = "Manual input"
@@ -319,6 +326,7 @@ final class AssistantSession: ObservableObject {
         Diagnostics.event("result_copied", action: action.rawValue)
     }
     func cancel(close: Bool = true) {
+        closeQuestions()
         requestID = UUID(); task?.cancel(); task = nil
         if close { speech.stop() }
         if phase == .processing { inference.cancel() }

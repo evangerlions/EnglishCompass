@@ -13,8 +13,31 @@ struct ResultView: View {
     private let accent = Color(red: 0.08, green: 0.43, blue: 0.40)
 
     var body: some View {
+        HStack(spacing: 0) {
+            if !session.isQuestionOpen || !session.questionUsesOverlay { mainPanel }
+            if session.isQuestionOpen {
+                if !session.questionUsesOverlay { Divider() }
+                QuestionSidebar(conversation: session.questions, onClose: session.closeQuestions)
+                    .frame(width: session.questionUsesOverlay ? PanelSizing.width : PanelSizing.questionSidebarWidth)
+            }
+        }
+        .tint(accent)
+        .sheet(isPresented: $showDebug) {
+            RequestDebugSheet(request: session.rawRequest, response: session.rawResponse)
+        }
+        .onExitCommand {
+            if session.isQuestionOpen { session.closeQuestions() } else { session.cancel() }
+        }
+    }
+
+    private var mainPanel: some View {
         VStack(alignment: .leading, spacing: 16) {
             HStack(spacing: 8) {
+                if session.phase == .result {
+                    Button { session.returnToInput() } label: { Image(systemName: "chevron.left") }
+                        .buttonStyle(.plain).help("Back to input")
+                        .accessibilityLabel("Back to input").accessibilityIdentifier("back_to_input")
+                }
                 Text(session.action.title).font(.system(size: 13, weight: .semibold))
                 if let modeBadge {
                     Text(modeBadge).font(.system(size: 9, weight: .bold)).tracking(1)
@@ -23,6 +46,14 @@ struct ResultView: View {
                         .background(accent.opacity(0.14), in: Capsule())
                 }
                 Spacer()
+                if session.phase == .result {
+                    Button {
+                        if session.isQuestionOpen { session.closeQuestions() } else { session.openQuestions() }
+                    } label: { Label("Question", systemImage: "bubble.left.and.bubble.right") }
+                        .buttonStyle(.plain).foregroundStyle(accent)
+                        .disabled(session.isStreaming || session.result == nil)
+                        .accessibilityIdentifier("open_question")
+                }
                 if onInspector != nil {
                     Button { onInspector?() } label: { Image(systemName: "text.magnifyingglass") }
                         .buttonStyle(.plain).foregroundStyle(.secondary)
@@ -85,12 +116,7 @@ struct ResultView: View {
                 Spacer()
             }
             footer
-        }.padding(20).frame(width: 540).frame(maxHeight: .infinity, alignment: .top)
-            .tint(accent)
-            .sheet(isPresented: $showDebug) {
-                RequestDebugSheet(request: session.rawRequest, response: session.rawResponse)
-            }
-            .onExitCommand { session.cancel() }
+        }.padding(20).frame(width: PanelSizing.width).frame(maxHeight: .infinity, alignment: .top)
     }
 
     private var footer: some View {
