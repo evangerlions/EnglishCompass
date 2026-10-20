@@ -191,9 +191,9 @@ private struct LabInspector: View {
                 Divider()
             }
             ScrollView {
-                Text(text.isEmpty ? "Nothing yet. Run a request in the panel." : text)
+                Text(text.isEmpty ? AttributedString("Nothing yet. Run a request in the panel.")
+                     : tab == .prompt ? AttributedString(text) : JSONDebugView.highlight(text))
                     .font(.system(size: 11, design: .monospaced))
-                    .foregroundStyle(text.isEmpty ? .tertiary : .primary)
                     .textSelection(.enabled)
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .padding(12)
@@ -203,23 +203,12 @@ private struct LabInspector: View {
 
     private var text: String {
         switch tab {
-        case .response: prettyJSON(session.rawResponse)
-        case .request: prettyJSON(session.rawRequest)
+        case .response: session.rawResponse ?? ""
+        case .request: session.rawRequest ?? ""
         case .prompt:
             (try? CloudAPIContract.prompt(action: session.action,
                                           additionalInstructions: preferences.instructions(for: session.action))) ?? ""
         }
     }
 
-    private func prettyJSON(_ raw: String?) -> String {
-        guard let raw, let data = raw.data(using: .utf8),
-              let object = try? JSONSerialization.jsonObject(with: data),
-              let pretty = try? JSONSerialization.data(withJSONObject: object, options: [.prettyPrinted, .sortedKeys, .withoutEscapingSlashes]),
-              var text = String(data: pretty, encoding: .utf8) else { return raw ?? "" }
-        if let choices = (object as? [String: Any])?["choices"] as? [[String: Any]],
-           let content = (choices.first?["message"] as? [String: Any])?["content"] as? String {
-            text += "\n\n── message content (rendered) ──\n" + content
-        }
-        return text
-    }
 }

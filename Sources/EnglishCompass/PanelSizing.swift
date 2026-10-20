@@ -41,9 +41,10 @@ enum PanelSizing {
 
     /// Overflow during a pending window growth is temporary, not scrollable UI.
     static func showsResultScrollIndicators(content: CGFloat, viewport: CGFloat,
-                                            panelHeight: CGFloat, screenHeight: CGFloat) -> Bool {
+                                            panelHeight: CGFloat, screenHeight: CGFloat,
+                                            maxHeight: CGFloat = maxResultHeight) -> Bool {
         guard content > 0, viewport > 0 else { return false }
-        let cap = max(minResultHeight, min(maxResultHeight, screenHeight - 40))
+        let cap = max(minResultHeight, min(maxHeight, screenHeight - 40))
         return panelHeight >= cap - tolerance && content > viewport + tolerance
     }
 

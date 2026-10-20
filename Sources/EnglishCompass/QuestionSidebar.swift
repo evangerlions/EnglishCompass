@@ -46,12 +46,15 @@ struct QuestionSidebar: View {
                 Text(conversation.error).font(.caption).foregroundStyle(.red).textSelection(.enabled)
             }
             NativeTextEditor(text: $conversation.draft, placeholder: "Ask a question…",
-                             fontSize: 13, identifier: "question_input", label: "Question input")
+                             fontSize: 13, identifier: "question_input", label: "Question input",
+                             onSubmit: { conversation.send() })
                 .frame(height: 76)
                 .background(Color(nsColor: .textBackgroundColor), in: RoundedRectangle(cornerRadius: 10))
                 .overlay(RoundedRectangle(cornerRadius: 10).strokeBorder(Color.primary.opacity(0.1)))
             HStack {
-                Text("Chat is not saved on this Mac.").font(.system(size: 10)).foregroundStyle(.secondary)
+                Text("Enter to send · Shift+Enter for a new line")
+                    .font(.system(size: 10)).foregroundStyle(.secondary)
+                    .help("Chat is not saved on this Mac.")
                 Spacer()
                 if conversation.isSending {
                     Button("Stop") { conversation.stop() }.accessibilityIdentifier("stop_question")

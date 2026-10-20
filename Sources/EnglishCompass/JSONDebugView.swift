@@ -122,14 +122,24 @@ struct JSONDebugView: View {
             i = pretty.index(after: i)
         }
 
-        return AttributedString(result)
+        // Text consumes SwiftUI attributes; AppKit-only colors can render as plain text.
+        var highlighted = AttributedString(pretty)
+        highlighted.font = .system(size: 11, design: .monospaced)
+        result.enumerateAttribute(.foregroundColor, in: NSRange(location: 0, length: result.length)) { value, range, _ in
+            guard let color = value as? NSColor,
+                  let stringRange = Range(range, in: pretty),
+                  let start = AttributedString.Index(stringRange.lowerBound, within: highlighted),
+                  let end = AttributedString.Index(stringRange.upperBound, within: highlighted) else { return }
+            highlighted[start..<end].foregroundColor = Color(nsColor: color)
+        }
+        return highlighted
     }
 
     /// Try to pretty-print JSON; fall back to the raw string if it isn't valid JSON.
     private static func pretty(_ raw: String) -> String {
         guard let data = raw.data(using: .utf8),
               let obj = try? JSONSerialization.jsonObject(with: data, options: [.fragmentsAllowed]),
-              let pretty = try? JSONSerialization.data(withJSONObject: obj, options: [.prettyPrinted, .sortedKeys]),
+              let pretty = try? JSONSerialization.data(withJSONObject: obj, options: [.fragmentsAllowed, .prettyPrinted, .sortedKeys, .withoutEscapingSlashes]),
               let text = String(data: pretty, encoding: .utf8)
         else { return raw }
         return text

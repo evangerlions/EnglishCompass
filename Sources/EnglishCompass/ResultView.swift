@@ -13,13 +13,16 @@ struct ResultView: View {
     private let accent = Color(red: 0.08, green: 0.43, blue: 0.40)
 
     var body: some View {
-        HStack(spacing: 0) {
+        VStack(spacing: 0) {
+            HStack(spacing: 0) {
             if !session.isQuestionOpen || !session.questionUsesOverlay { mainPanel }
             if session.isQuestionOpen {
                 if !session.questionUsesOverlay { Divider() }
                 QuestionSidebar(conversation: session.questions, onClose: session.closeQuestions)
                     .frame(width: session.questionUsesOverlay ? PanelSizing.width : PanelSizing.questionSidebarWidth)
             }
+            }
+            PanelHeightDragHandle(session: session).frame(height: 14)
         }
         .tint(accent)
         .sheet(isPresented: $showDebug) {
@@ -186,7 +189,8 @@ struct ResultView: View {
                         onMeasure: ((CGFloat, CGFloat) -> Void)? = nil) -> some View {
         NativeTextEditor(text: text, placeholder: placeholder, identifier: id,
                          label: id == "manual_input" ? "Input text" : "Editable result",
-                         onMeasure: onMeasure)
+                         onMeasure: onMeasure,
+                         onSubmit: id == "manual_input" ? { session.process() } : nil)
             .frame(minHeight: 96, maxHeight: .infinity)
             .background(Color(nsColor: .textBackgroundColor), in: RoundedRectangle(cornerRadius: 10))
             .overlay(RoundedRectangle(cornerRadius: 10).strokeBorder(Color.primary.opacity(0.08)))

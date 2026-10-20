@@ -16,6 +16,11 @@ final class PanelAutoFitter {
     private var measureObservation: AnyCancellable?
     private var inputMeasureObservation: AnyCancellable?
     private var questionObservation: AnyCancellable?
+    private var heightPreferenceObservation: AnyCancellable?
+    private var maximumHeight: CGFloat {
+        max(CGFloat(Preferences.validPanelHeight(session.preferences.maxPanelHeight)),
+            session.isQuestionOpen ? PanelSizing.minQuestionHeight : PanelSizing.minInputHeight)
+    }
     private var currentHeight: CGFloat = 0
     /// Coalesces rapid measurements. A resize is applied only after the measured
     /// target has stayed unchanged for `settleDelay`, so intermediate layout
@@ -44,6 +49,21 @@ final class PanelAutoFitter {
             .sink { [weak self] _ in DispatchQueue.main.async { self?.fitInput() } }
         questionObservation = session.$isQuestionOpen
             .sink { [weak self] _ in DispatchQueue.main.async { self?.updateQuestionLayout() } }
+        heightPreferenceObservation = session.preferences.$maxPanelHeight
+            .dropFirst()
+            .sink { [weak self] _ in
+                let isDragging = self?.session.isAdjustingPanelHeight == true
+                DispatchQueue.main.async {
+                    guard let self else { return }
+                    self.cancelSettle()
+                    if isDragging {
+                        self.resizePanel(to: self.maximumHeight)
+                    } else {
+                        self.fitResult()
+                        self.fitInput()
+                    }
+                }
+            }
     }
 
     private func updateQuestionLayout() {
@@ -57,12 +77,12 @@ final class PanelAutoFitter {
     }
 
     private func fitResult() {
-        guard session.phase == .result else { return }
+        guard session.phase == .result, !session.isAdjustingPanelHeight else { return }
         if let panel, let measure = session.resultMeasure {
             let screen = (panel.screen ?? NSScreen.main)?.visibleFrame.height ?? 800
             let visible = PanelSizing.showsResultScrollIndicators(
                 content: measure.content, viewport: measure.viewport,
-                panelHeight: currentHeight, screenHeight: screen)
+                panelHeight: currentHeight, screenHeight: screen, maxHeight: maximumHeight)
             if visible != session.showsResultScrollIndicators {
                 session.showsResultScrollIndicators = visible
             }
@@ -70,13 +90,14 @@ final class PanelAutoFitter {
             session.showsResultScrollIndicators = false
         }
         fit(session.resultMeasure, minHeight: PanelSizing.minResultHeight,
-            maxHeight: PanelSizing.maxResultHeight)
+            maxHeight: maximumHeight)
     }
 
     private func fitInput() {
+        guard !session.isAdjustingPanelHeight else { return }
         guard session.phase == .input || session.phase == .error else { return }
         fit(session.inputMeasure, minHeight: PanelSizing.minInputHeight,
-            maxHeight: PanelSizing.maxInputHeight)
+            maxHeight: maximumHeight)
     }
 
     private func fit(_ measure: AssistantSession.ResultMeasure?, minHeight: CGFloat, maxHeight: CGFloat) {
@@ -122,7 +143,7 @@ final class PanelAutoFitter {
     private func resizePanel(to height: CGFloat) {
         guard let panel else { return }
         let bounds = (panel.screen ?? NSScreen.main)?.visibleFrame ?? panel.frame
-        let clamped = min(height, bounds.height - 40)
+        let clamped = min(height, maximumHeight, bounds.height - 40)
         let top = panel.frame.maxY
         let width = PanelSizing.windowWidth(questionOpen: session.isQuestionOpen, screenWidth: bounds.width)
         panel.setContentSize(NSSize(width: width, height: clamped))

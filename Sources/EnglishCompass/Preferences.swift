@@ -51,6 +51,13 @@ final class Preferences: ObservableObject {
     @Published var writeInstructions: String { didSet { save() } }
     @Published var understandInstructions: String { didSet { save() } }
     @Published var diagnostics: Bool { didSet { save() } }
+    @Published var maxPanelHeight: Double { didSet { save() } }
+    static let panelHeightRange: ClosedRange<Double> = 240...2000
+    static let defaultMaxPanelHeight: Double = 1320
+    static func validPanelHeight(_ value: Double) -> Double {
+        value.isFinite ? min(max(value, panelHeightRange.lowerBound), panelHeightRange.upperBound)
+            : defaultMaxPanelHeight
+    }
     @Published var writeShortcut: Shortcut { didSet { save() } }
     @Published var understandShortcut: Shortcut { didSet { save() } }
     @Published var speakShortcut: Shortcut { didSet { save() } }
@@ -83,6 +90,8 @@ final class Preferences: ObservableObject {
         understandInstructions = defaults.object(forKey: "understandInstructions") == nil
             ? legacyInstructions : (defaults.string(forKey: "understandInstructions") ?? "")
         diagnostics = defaults.bool(forKey: "diagnostics")
+        maxPanelHeight = Self.validPanelHeight(
+            (defaults.object(forKey: "maxPanelHeight") as? NSNumber)?.doubleValue ?? Self.defaultMaxPanelHeight)
         writeShortcut = Self.decode(defaults, "writeShortcut") ?? .write
         let savedUnderstand: Shortcut? = Self.decode(defaults, "understandShortcut")
         // Every save() persists all shortcuts, so a stored value equal to the old
@@ -126,6 +135,7 @@ final class Preferences: ObservableObject {
         defaults.set(writeInstructions, forKey: "writeInstructions")
         defaults.set(understandInstructions, forKey: "understandInstructions")
         defaults.set(diagnostics, forKey: "diagnostics")
+        defaults.set(Self.validPanelHeight(maxPanelHeight), forKey: "maxPanelHeight")
         defaults.set(try? JSONEncoder().encode(writeShortcut), forKey: "writeShortcut")
         defaults.set(try? JSONEncoder().encode(understandShortcut), forKey: "understandShortcut")
         defaults.set(try? JSONEncoder().encode(speakShortcut), forKey: "speakShortcut")

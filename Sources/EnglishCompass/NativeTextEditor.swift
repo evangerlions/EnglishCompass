@@ -11,6 +11,8 @@ struct NativeTextEditor: NSViewRepresentable {
     /// Reports (laid-out text content height, visible scroll height) whenever
     /// either changes, so the panel can fit itself to short or long input.
     var onMeasure: ((CGFloat, CGFloat) -> Void)?
+    /// Opt-in chat behavior; other editors keep their normal multiline Return.
+    var onSubmit: (() -> Void)?
 
     func makeCoordinator() -> Coordinator { Coordinator(self) }
     func makeNSView(context: Context) -> WrappingScrollView {
@@ -63,6 +65,7 @@ struct NativeTextEditor: NSViewRepresentable {
         let font = NSFont.systemFont(ofSize: fontSize)
         if editor.font != font { editor.font = font }
         editor.placeholder = placeholder
+        editor.onSubmit = onSubmit
         editor.setAccessibilityIdentifier(identifier)
         editor.setAccessibilityLabel(label)
     }
@@ -93,6 +96,19 @@ struct NativeTextEditor: NSViewRepresentable {
 
 final class PlaceholderTextView: NSTextView {
     var placeholder = "" { didSet { needsDisplay = true } }
+    var onSubmit: (() -> Void)?
+
+    override func keyDown(with event: NSEvent) {
+        // Let the input method consume Return while choosing/composing text.
+        if let onSubmit, !hasMarkedText(),
+           event.keyCode == 36 || event.keyCode == 76,
+           event.modifierFlags.intersection([.shift, .option, .control]).isEmpty {
+            onSubmit()
+            return
+        }
+        super.keyDown(with: event)
+    }
+
     override func draw(_ dirtyRect: NSRect) {
         super.draw(dirtyRect)
         guard string.isEmpty, !placeholder.isEmpty else { return }

@@ -44,6 +44,7 @@ final class AssistantSession: ObservableObject {
         if measure != inputMeasure { inputMeasure = measure }
     }
     let preferences: Preferences
+    var isAdjustingPanelHeight = false
     let accessibility: AccessibilityBridge
     let inference: any InferencePerforming
     let speech: SpeechService
