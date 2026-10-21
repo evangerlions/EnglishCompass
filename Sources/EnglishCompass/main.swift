@@ -19,7 +19,7 @@ MainActor.assumeIsolated {
         }
     }
     let app = NSApplication.shared
-    if CommandLine.arguments.contains("--lab") {
+    if CommandLine.arguments.contains("--lab") || Bundle.main.bundleIdentifier == LabAppDelegate.defaultsSuite {
         // Local test window only: no shortcuts, status item, capture or Keychain.
         let lab = LabAppDelegate()
         app.delegate = lab

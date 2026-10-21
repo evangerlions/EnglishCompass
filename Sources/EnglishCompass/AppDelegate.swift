@@ -18,7 +18,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     private var fitter: PanelAutoFitter?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
-        NSApp.setActivationPolicy(.accessory)
+        NSApp.setActivationPolicy(.regular)
         NSApp.mainMenu = ApplicationMenus.make()
         session = AssistantSession(preferences: preferences, accessibility: accessibility, inference: inference,
                                    speech: speech)
@@ -72,6 +72,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         if ProcessInfo.processInfo.arguments.contains("--ui-test") { showAssistant(.writeEnglish, capture: false) }
         else { showSettings() }
     }
+    /// Dock clicks restore the same panel, not a new capture or model request.
+    func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
+        if let panel {
+            AssistantWindowPresentation.restore(panel)
+        } else {
+            showAssistant(.writeEnglish, capture: false)
+        }
+        return false
+    }
+
     func applicationWillTerminate(_ notification: Notification) { session.cancel(); inference.cancel() }
     private func add(_ title: String, action: Selector, to menu: NSMenu) {
         let entry = NSMenuItem(title: title, action: action, keyEquivalent: ""); entry.target = self; menu.addItem(entry)
@@ -118,6 +128,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                                  styleMask: [.titled, .closable, .fullSizeContentView], backing: .buffered, defer: false)
             window.title = "English Compass"
             window.titleVisibility = .hidden; window.titlebarAppearsTransparent = true
+            AssistantWindowPresentation.configure(window)
             window.isFloatingPanel = true; window.level = .floating; window.isReleasedWhenClosed = false
             window.delegate = self
             window.isOpaque = false

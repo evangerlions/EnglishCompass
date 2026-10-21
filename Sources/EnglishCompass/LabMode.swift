@@ -45,6 +45,7 @@ final class LabAppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         // from Terminal can end up invisible on the active space.
         let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: PanelSizing.width, height: PanelSizing.minInputHeight),
                               styleMask: [.titled, .closable, .fullSizeContentView], backing: .buffered, defer: false)
+        AssistantWindowPresentation.configure(window)
         window.title = "English Compass Lab"
         window.titleVisibility = .hidden
         window.titlebarAppearsTransparent = true
@@ -65,6 +66,11 @@ final class LabAppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         print(key == nil
               ? "event=lab_started key=missing hint=export \(Self.keyVariable) in ~/.zshrc and relaunch from a new Terminal"
               : "event=lab_started key=environment")
+    }
+
+    func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
+        if let panel { AssistantWindowPresentation.restore(panel) }
+        return false
     }
 
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {

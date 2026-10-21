@@ -82,9 +82,8 @@ final class InferenceService: InferencePerforming {
         cancel()
         cachedCredential = key.trimmingCharacters(in: .whitespacesAndNewlines)
     }
-    /// Reads the Keychain key before the panel is shown. A Keychain password
-    /// prompt deactivates the app, and the floating panel hides on deactivation,
-    /// so the prompt must not appear while the user is working in the panel.
+    /// Resolves any Keychain prompt before editing starts. The window no longer
+    /// hides on deactivation, but preflight still avoids interrupting a draft.
     /// Failures are not cached; the request path reports them normally.
     func prepareCredential() {
         guard cachedCredential == nil else { return }

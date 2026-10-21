@@ -29,6 +29,10 @@ bash Scripts/install-app.sh
 open "$HOME/Applications/English Compass.app"
 ```
 
+The app appears in Dock and Command-Tab while running. Clicking its Dock icon
+brings the existing assistant window forward without resetting input, answers,
+or follow-up questions. Switching apps does not hide the window; close it with ×.
+
 The installed app needs no Python, MLX, model weights or separate server.
 Packaging removes obsolete worker resources from previous installations.
 
@@ -118,9 +122,14 @@ See `docs/VALIDATION.md` for current evidence and remaining acceptance blockers.
 For prompt and UI work without touching the installed app:
 
 ```bash
-./Scripts/run-lab.sh
-# or: swift run EnglishCompass --lab --disable-sandbox
+bash Scripts/run-lab.sh
+# or bare-binary mode without bundled icon: swift run EnglishCompass --lab
 ```
+
+The launcher builds `dist/English Compass Lab.app` with the existing app artwork
+and a separate Dock identity. Dock clicks bring the current Lab window forward.
+Start with the script so the environment key is loaded; no key is stored in the
+bundle. The release installation is not changed by the Lab launcher.
 
 Lab mode opens the production assistant panel itself (same glass, same cards
 and the same adaptive height) with only a `LAB` badge added, so UI work looks

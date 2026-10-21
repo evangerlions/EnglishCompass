@@ -29,7 +29,7 @@ final class LabModeTests: XCTestCase {
     }
 
     func testLabSettingsAreIsolatedFromTheInstalledApp() {
-        let suite = LabAppDelegate.defaultsSuite
+        let suite = LabAppDelegate.defaultsSuite + ".tests.\(UUID())"
         let lab = UserDefaults(suiteName: suite)!
         defer { lab.removePersistentDomain(forName: suite) }
         XCTAssertNotEqual(suite, Bundle.main.bundleIdentifier)
