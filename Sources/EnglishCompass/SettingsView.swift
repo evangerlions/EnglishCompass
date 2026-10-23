@@ -110,6 +110,7 @@ struct SettingsView: View {
                 .font(.system(size: 11, weight: .medium)).foregroundStyle(.secondary)
             Text("Review first. Replace when ready.")
                 .font(.system(size: 10)).foregroundStyle(.secondary).padding(.top, 5)
+            SettingsVersionView().padding(.top, 14)
         }.padding(20).frame(width: 218)
             .background(Color(nsColor: .controlBackgroundColor))
     }
