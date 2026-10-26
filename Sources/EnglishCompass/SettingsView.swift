@@ -5,12 +5,13 @@ import ServiceManagement
 import AssistantCore
 
 private enum SettingsPage: String, CaseIterable, Identifiable {
-    case shortcuts = "Shortcuts", model = "Model & API", instructions = "Instructions", privacy = "Privacy & access"
+    case shortcuts = "Shortcuts", model = "Model & API", language = "Language", instructions = "Instructions", privacy = "Privacy & access"
     var id: String { rawValue }
     var symbol: String {
         switch self {
         case .shortcuts: "keyboard"
         case .model: "network"
+        case .language: "globe"
         case .instructions: "text.alignleft"
         case .privacy: "lock"
         }
@@ -19,6 +20,7 @@ private enum SettingsPage: String, CaseIterable, Identifiable {
         switch self {
         case .shortcuts: "A little less friction. In every app."
         case .model: "Fast answers, powered by your own API key."
+        case .language: "Choose the language for your writing and translations."
         case .instructions: "Make the assistant sound more like you."
         case .privacy: "You decide what the assistant can access."
         }
@@ -53,6 +55,7 @@ struct SettingsView: View {
                         switch page {
                         case .shortcuts: shortcutsContent
                         case .model: modelContent
+                        case .language: surface { WritingLanguageSettingsView(preferences: preferences) }
                         case .instructions: instructionsContent
                         case .privacy: privacyContent
                         }
@@ -171,8 +174,8 @@ struct SettingsView: View {
     private var instructionsContent: some View {
         VStack(alignment: .leading, spacing: 16) {
             instructionEditor(title: "Write instructions",
-                              detail: "Used only by Write in English.",
-                              placeholder: "Use concise, natural English.\nKeep the tone friendly and professional.",
+                              detail: "Used by Write / Translate. Target: \(preferences.writingLanguage.name).",
+                              placeholder: "Use concise, natural wording.\nKeep the tone friendly and professional.",
                               text: $preferences.writeInstructions,
                               identifier: "write_instructions")
             instructionEditor(title: "Understand instructions",
@@ -192,7 +195,8 @@ struct SettingsView: View {
                     }
                     ScrollView {
                         Text((try? CloudAPIContract.prompt(action: promptAction,
-                                                          additionalInstructions: preferences.instructions(for: promptAction))) ?? "Unavailable")
+                                                          additionalInstructions: preferences.instructions(for: promptAction),
+                                                          targetLanguage: preferences.writingLanguage)) ?? "Unavailable")
                             .font(.system(size: 11, design: .monospaced))
                             .textSelection(.enabled)
                             .frame(maxWidth: .infinity, alignment: .leading)
@@ -289,7 +293,7 @@ struct SettingsView: View {
                     }.contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
-                .help("Open \(kind.title)")
+                .help("Open \(kind == .write ? "Write / Translate" : kind.title)")
                 .accessibilityIdentifier("open_" + action.rawValue)
             } else {
                 HStack(spacing: 8) {
@@ -309,8 +313,8 @@ struct SettingsView: View {
 
     private func shortcutText(_ kind: ShortcutKind) -> some View {
         VStack(alignment: .leading, spacing: 5) {
-            Text(kind.title).font(.system(size: 13, weight: .medium))
-            Text(kind.detail).font(.system(size: 11)).foregroundStyle(.secondary)
+            Text(kind == .write ? "Write in \(preferences.writingLanguage.name)" : kind.title).font(.system(size: 13, weight: .medium))
+            Text(kind == .write ? "Refine a draft or translate it into \(preferences.writingLanguage.name)." : kind.detail).font(.system(size: 11)).foregroundStyle(.secondary)
         }
     }
 

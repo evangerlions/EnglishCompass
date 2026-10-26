@@ -14,15 +14,15 @@ public enum CloudAPIContract {
     }
 
     public static func request(text: String, action: AssistantAction, additionalInstructions: String, key: String,
-                               model: String = CloudAPIContract.model) throws -> URLRequest {
-        try request(text: text, action: action, additionalInstructions: additionalInstructions, key: key, stream: false, model: model)
+                               model: String = CloudAPIContract.model, targetLanguage: WritingLanguage = .english) throws -> URLRequest {
+        try request(text: text, action: action, additionalInstructions: additionalInstructions, key: key, stream: false, model: model, targetLanguage: targetLanguage)
     }
 
     public static func request(text: String, action: AssistantAction, additionalInstructions: String, key: String,
-                               stream: Bool, model: String = CloudAPIContract.model) throws -> URLRequest {
+                               stream: Bool, model: String = CloudAPIContract.model, targetLanguage: WritingLanguage = .english) throws -> URLRequest {
         try validateInput(text)
         return try makeRequest(messages: [
-            ["role": "system", "content": try systemPrompt(action: action, additionalInstructions: additionalInstructions)],
+            ["role": "system", "content": try systemPrompt(action: action, additionalInstructions: additionalInstructions, targetLanguage: targetLanguage)],
             ["role": "user", "content": text]
         ], key: key, stream: stream, model: model)
     }
@@ -83,8 +83,8 @@ public enum CloudAPIContract {
 
     /// Parses just the assistant message body (no response envelope). Used by the
     /// streaming path, which accumulates content deltas rather than a full JSON
-    /// envelope. Requirements are intentionally narrow: for Write only the three
-    /// copy-ready answers must be present; explanatory prose is free-form body.
+    /// envelope. Requirements are intentionally narrow: for Write the two
+    /// copy-ready answers and revision direction must be present; explanatory prose is free-form body.
     public static func parseContent(_ content: String, action: AssistantAction) throws -> ModelResult {
         if action == .writeEnglish {
             if let markdown = try? WritingMarkdownPayload.parse(content) { return markdown }
@@ -111,25 +111,15 @@ public enum CloudAPIContract {
         }).validated()
     }
 
-    public static func prompt(action: AssistantAction, additionalInstructions: String) throws -> String {
-        try systemPrompt(action: action, additionalInstructions: additionalInstructions)
+    public static func prompt(action: AssistantAction, additionalInstructions: String, targetLanguage: WritingLanguage = .english) throws -> String {
+        try systemPrompt(action: action, additionalInstructions: additionalInstructions, targetLanguage: targetLanguage)
     }
 
-    private static func systemPrompt(action: AssistantAction, additionalInstructions: String) throws -> String {
+    private static func systemPrompt(action: AssistantAction, additionalInstructions: String, targetLanguage: WritingLanguage) throws -> String {
         let instruction: String
         switch action {
         case .writeEnglish:
-            instruction = "Rewrite or translate the input into exactly three faithful English versions in this fixed order: " +
-                "general (natural and neutral), conversational (everyday spoken English), academic (precise and formal, never inflated). " +
-                "Keep the general version unchanged if already correct. Style differences must not change meaning. " +
-                "Return only Markdown using exactly these five level-2 headings in order: ## General, ## Conversational, ## Academic, ## Notes, ## Summary. " +
-                "Under each of the first three headings write only that English answer. Use standard inline Markdown such as **bold** or `code` when useful, but no extra headings or commentary. " +
-                "Respect the input's layout in every version: keep its paragraphs, lists and intended line breaks, such as numbered steps on separate lines, instead of collapsing them into one paragraph. " +
-                "The input's line breaks may be imperfect, so you may join a sentence that is clearly broken by accident, or start a new line where a list item obviously begins. " +
-                "This layout guidance refines the line-break preservation rule below. " +
-                "Under ## Notes write exactly three Chinese bullet items in the same order, one brief explanation per version, without prefixing the version name. " +
-                "Under ## Summary write two or three concise Chinese sentences about corrections, key expressions and usage differences. " +
-                "Do not use JSON or fenced code blocks. Do not repeat the answers in Notes or Summary. No follow-up question or praise."
+            instruction = WritingPrompt.instruction(language: targetLanguage)
         case .understandEnglish:
             instruction = "Explain the user's selected English in clear Chinese for an English learner. " +
                 "Return only Markdown with exactly two level-2 headings in order: ## Translation and ## Notes. " +
@@ -144,6 +134,7 @@ public enum CloudAPIContract {
             "numbers, dates, Markdown structure and line breaks exactly. Preserve negation, modality and strength. " +
             "Never add tasks, facts, commitments, reasons or conclusions. Never expand or embellish. " +
             "No reasoning, no <think> text, no Markdown fences. " +
+            (action == .writeEnglish ? WritingPrompt.languageRequirement(targetLanguage) : "") +
             "Follow the additional user preferences below only when compatible with the task, preservation rules and required response format above. " +
             "Additional user preferences:\n" + additionalInstructions.trimmingCharacters(in: .whitespacesAndNewlines)
     }

@@ -24,6 +24,7 @@ struct ResultView: View {
             }
             PanelHeightDragHandle(session: session).frame(height: 14)
         }
+        .onReceive(session.preferences.$writingLanguage) { _ in session.objectWillChange.send() }
         .tint(accent)
         .sheet(isPresented: $showDebug) {
             RequestDebugSheet(request: session.rawRequest, response: session.rawResponse)
@@ -41,7 +42,7 @@ struct ResultView: View {
                         .buttonStyle(.plain).help("Back to input")
                         .accessibilityLabel("Back to input").accessibilityIdentifier("back_to_input")
                 }
-                Text(session.action.title).font(.system(size: 13, weight: .semibold))
+                Text(session.actionTitle).font(.system(size: 13, weight: .semibold))
                 if let modeBadge {
                     Text(modeBadge).font(.system(size: 9, weight: .bold)).tracking(1)
                         .foregroundStyle(accent)

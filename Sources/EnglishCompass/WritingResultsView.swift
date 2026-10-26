@@ -12,7 +12,6 @@ struct WritingResultsView: View {
     @State private var contentHeight: CGFloat = 0
     @State private var viewportHeight: CGFloat = 0
     @State private var scrollSelectionIntoView = false
-    private let titles = ["通用", "口语", "学术"]
     private let accent = Color(red: 0.07, green: 0.56, blue: 0.50)
 
     var body: some View {
@@ -93,7 +92,7 @@ struct WritingResultsView: View {
     @ViewBuilder
     private var streamingCards: some View {
         let live = session.liveWriteSections
-        ForEach(0..<3, id: \.self) { index in
+        ForEach(live.cards.indices, id: \.self) { index in
             if let markdown = live.cards[index] {
                 streamingCard(index: index, markdown: markdown,
                               isCurrent: live.current == index)
@@ -109,7 +108,7 @@ struct WritingResultsView: View {
         let plain = plainCopy(markdown)
         return VStack(alignment: .leading, spacing: 8) {
             HStack(spacing: 8) {
-                Text(titles[index])
+                Text(index == 0 ? "通用" : (session.liveWriteSections.direction ?? "推荐表达"))
                     .font(.system(size: 11.5, weight: .bold)).tracking(0.6)
                     .foregroundStyle(selected ? accent : Color.secondary)
                 if selected {
@@ -123,7 +122,7 @@ struct WritingResultsView: View {
                 Spacer()
                 // Speak only once this card is done streaming.
                 if finished {
-                    SpeakButton(speech: session.speech, text: plain, tint: accent)
+                    SpeakButton(speech: session.speech, text: plain, language: session.requestLanguage, tint: accent)
                         .accessibilityIdentifier("speak_answer_\(index)")
                 }
                 // Copy available as soon as there is any text, even mid-stream.
@@ -133,6 +132,8 @@ struct WritingResultsView: View {
                 .font(.system(size: 15))
                 .foregroundStyle(Color.primary.opacity(0.9))
                 .lineSpacing(2)
+                .multilineTextAlignment(session.requestLanguage.isRightToLeft ? .trailing : .leading)
+                .frame(maxWidth: .infinity, alignment: session.requestLanguage.isRightToLeft ? .trailing : .leading)
                 .fixedSize(horizontal: false, vertical: true)
                 .textSelection(.enabled)
         }
@@ -147,28 +148,12 @@ struct WritingResultsView: View {
         .accessibilityIdentifier("answer_card_\(index)")
     }
 
-    @ViewBuilder
     private func streamingCopyButton(index: Int, plain: String, selected: Bool) -> some View {
-        let copied = selected && session.message == "Copied."
-        let button = Button {
+        AnswerCopyButton(index: index, selected: selected, copied: selected && session.message == "Copied.", accent: accent) {
             session.chooseStreamingCandidate(index, plain: plain)
             NSPasteboard.general.clearContents()
             NSPasteboard.general.setString(plain, forType: .string)
             session.message = "Copied."
-        } label: {
-            Image(systemName: copied ? "checkmark" : "doc.on.doc")
-                .font(.system(size: 12, weight: .medium))
-                .frame(width: 26, height: 22)
-        }
-        .help(copied ? "Copied" : "Copy")
-        .accessibilityLabel(copied ? "Copied" : "Copy")
-        .accessibilityIdentifier("copy_answer_\(index)")
-        if #available(macOS 26.0, *) {
-            if selected { button.buttonStyle(.glassProminent).tint(accent) }
-            else { button.buttonStyle(.glass) }
-        } else {
-            if selected { button.buttonStyle(.borderedProminent).tint(accent) }
-            else { button.buttonStyle(.bordered) }
         }
     }
 
@@ -203,7 +188,7 @@ struct WritingResultsView: View {
                         .transition(.scale.combined(with: .opacity))
                 }
                 Spacer()
-                SpeakButton(speech: session.speech, text: result.candidates[index], tint: accent)
+                SpeakButton(speech: session.speech, text: result.candidates[index], language: session.requestLanguage, tint: accent)
                     .accessibilityIdentifier("speak_answer_\(index)")
                 copyButton(index: index, selected: selected, copied: copied)
             }
@@ -211,6 +196,8 @@ struct WritingResultsView: View {
                 .font(.system(size: 15))
                 .foregroundStyle(selected ? Color.primary : Color.primary.opacity(0.72))
                 .lineSpacing(2)
+                .multilineTextAlignment(session.requestLanguage.isRightToLeft ? .trailing : .leading)
+                .frame(maxWidth: .infinity, alignment: session.requestLanguage.isRightToLeft ? .trailing : .leading)
                 .fixedSize(horizontal: false, vertical: true)
                 .textSelection(.enabled)
         }
@@ -255,24 +242,9 @@ struct WritingResultsView: View {
         }
     }
 
-    @ViewBuilder
     private func copyButton(index: Int, selected: Bool, copied: Bool) -> some View {
-        let button = Button {
+        AnswerCopyButton(index: index, selected: selected, copied: copied, accent: accent) {
             session.chooseCandidate(index); session.copy(); keyboardFocused = true
-        } label: {
-            Image(systemName: copied ? "checkmark" : "doc.on.doc")
-                .font(.system(size: 12, weight: .medium))
-                .frame(width: 26, height: 22)
-        }
-        .help(copied ? "Copied" : "Copy")
-        .accessibilityLabel(copied ? "Copied" : "Copy")
-        .accessibilityIdentifier("copy_answer_\(index)")
-        if #available(macOS 26.0, *) {
-            if selected { button.buttonStyle(.glassProminent).tint(accent) }
-            else { button.buttonStyle(.glass) }
-        } else {
-            if selected { button.buttonStyle(.borderedProminent).tint(accent) }
-            else { button.buttonStyle(.bordered) }
         }
     }
 
@@ -327,8 +299,8 @@ struct WritingResultsView: View {
     }
 
     private func label(for result: ModelResult, index: Int) -> String {
-        if result.candidates.count == 3 { return titles[index] }
-        return result.candidates.count == 1 ? "回答" : "回答 \(index + 1)"
+        if result.candidates.count == 1 { return "回答" }
+        return index == 0 ? "通用" : (result.revisionDirection ?? "推荐表达")
     }
 
     private func answerText(_ result: ModelResult, index: Int) -> Text {

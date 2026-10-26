@@ -1,5 +1,23 @@
 # Native-Only Validation: 2026-10-11
 
+## 0.4.0 Release Validation: 2026-10-26
+
+Writing now targets one of 12 persisted languages and returns General plus an
+AI-directed Alternative. Direction metadata is excluded from copy/replacement.
+Bold identifies error corrections and italics identifies expression improvements.
+Copy actions use explicit colors and text labels, including inactive windows.
+
+A fresh isolated Swift test build discovered 137 tests: 134 passed, three opt-in
+live tests skipped. The separate native HTTPS smoke and raw streaming smoke both
+passed with a temporary environment credential and synthetic text. These exercise
+writing, English-to-Chinese understanding, final SSE completion and usage metadata;
+they do not prove live model quality for all 12 languages or Keychain access.
+Prompt/request coverage checks every target in streaming and non-streaming modes.
+
+The initial test attempt hit stale build-object metadata in the existing `.build`
+cache; the isolated rebuild passed. Earlier entries below are historical evidence
+and may describe the previous three-candidate contract.
+
 ## Single-Answer Compatibility and Compact Layout
 
 Writing accepts a single final plain-text answer, a candidates-only JSON object,

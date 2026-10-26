@@ -39,12 +39,12 @@ final class WritingResultsTests: XCTestCase {
         session.moveCandidate(1)
         XCTAssertEqual(session.message, "")
         session.moveCandidate(1)
-        XCTAssertEqual(session.candidateIndex, 2)
+        XCTAssertEqual(session.candidateIndex, 1)
         session.copy(to: board)
-        XCTAssertEqual(board.string(forType: .string), WritingFixture.result.candidates[2])
+        XCTAssertEqual(board.string(forType: .string), WritingFixture.result.candidates[1])
         session.phase = .input
         session.moveCandidate(-1)
-        XCTAssertEqual(session.candidateIndex, 2)
+        XCTAssertEqual(session.candidateIndex, 1)
     }
     @MainActor func testUnderstandingCopyUsesOnlyPlainTranslation() {
         let session = AssistantSession(preferences: Preferences(), accessibility: AccessibilityBridge(),

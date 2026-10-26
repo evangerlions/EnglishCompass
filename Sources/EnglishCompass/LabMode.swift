@@ -96,7 +96,7 @@ final class LabAppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
 
         let file = NSMenuItem()
         let fileMenu = NSMenu(title: "File")
-        fileMenu.addItem(item(title: "Write in English", key: "1", action: #selector(chooseWrite)))
+        fileMenu.addItem(item(title: "Write / Translate", key: "1", action: #selector(chooseWrite)))
         fileMenu.addItem(item(title: "Understand English", key: "2", action: #selector(chooseUnderstand)))
         fileMenu.addItem(.separator())
         fileMenu.addItem(item(title: "Run", key: "\r", action: #selector(run)))
@@ -168,6 +168,7 @@ private struct LabInspector: View {
     var body: some View {
         VStack(spacing: 0) {
             ModelSettingsView(preferences: preferences).padding(12)
+            WritingLanguageSettingsView(preferences: preferences).padding(.horizontal, 12).padding(.bottom, 12)
             Divider()
             HStack {
                 Picker("", selection: $tab) {
@@ -213,7 +214,8 @@ private struct LabInspector: View {
         case .request: session.rawRequest ?? ""
         case .prompt:
             (try? CloudAPIContract.prompt(action: session.action,
-                                          additionalInstructions: preferences.instructions(for: session.action))) ?? ""
+                                          additionalInstructions: preferences.instructions(for: session.action),
+                                          targetLanguage: preferences.writingLanguage)) ?? ""
         }
     }
 

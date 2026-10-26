@@ -18,6 +18,10 @@ final class AssistantSession: ObservableObject {
     @Published private(set) var elapsedSeconds: TimeInterval?
     @Published private(set) var requestStartedAt: Date?
     @Published private(set) var requestModel: QwenModel
+    @Published private(set) var requestLanguage: WritingLanguage
+    var actionTitle: String {
+        action == .writeEnglish ? "Write in \((phase == .input ? preferences.writingLanguage : requestLanguage).name)" : action.title
+    }
     @Published var sourceName = "Manual input"
     /// Measured scroll content and viewport of the current result view.
     struct ResultMeasure: Equatable { var content: CGFloat; var viewport: CGFloat }
@@ -66,6 +70,7 @@ final class AssistantSession: ObservableObject {
         self.preferences = preferences; self.accessibility = accessibility; self.inference = inference
         self.questions = QuestionSession(inference: inference)
         self.requestModel = preferences.model
+        self.requestLanguage = preferences.writingLanguage
         self.speech = speech ?? SpeechService(preferences: preferences)
     }
     var isUITest: Bool { ProcessInfo.processInfo.arguments.contains("--ui-test") }
@@ -78,26 +83,6 @@ final class AssistantSession: ObservableObject {
         return text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? nil : text
     }
     var isStreaming: Bool { streamingMarkdown != nil }
-
-    /// Live per-section Markdown for the Write response while streaming.
-    /// Index order matches the three cards; nil means that card has not started.
-    /// `current` is the index being written; earlier started cards are finished.
-    var liveWriteSections: (cards: [String?], notes: String?, summary: String?, current: Int?) {
-        guard let md = streamingMarkdown else { return (Array(repeating: nil, count: 3), nil, nil, nil) }
-        var s = StreamingSections()
-        s.ingest(md, known: StreamingSections.writeHeadings)
-        let cards = [s.displayOrNil("General"), s.displayOrNil("Conversational"), s.displayOrNil("Academic")]
-        return (cards, s.displayOrNil("Notes"), s.displayOrNil("Summary"),
-                s.currentHeadingIndex(in: StreamingSections.writeHeadings))
-    }
-
-    /// Live sections for the Understand response while streaming.
-    var liveUnderstandSections: (translation: String?, notes: String?) {
-        guard let md = streamingMarkdown else { return (nil, nil) }
-        var s = StreamingSections()
-        s.ingest(md, known: StreamingSections.understandHeadings)
-        return (s.displayOrNil("Translation"), s.displayOrNil("Notes"))
-    }
 
     /// Select a streaming card; the partial text becomes the copy/speak target.
     func chooseStreamingCandidate(_ index: Int, plain: String) {
@@ -121,7 +106,7 @@ final class AssistantSession: ObservableObject {
 
     func speakCurrent() {
         guard let speechText else { return }
-        speech.toggle(speechText)
+        speech.toggle(speechText, language: action == .writeEnglish ? requestLanguage : .english)
     }
     var canReplace: Bool {
         action == .writeEnglish && phase == .result && candidateIndex != nil && warnings.isEmpty &&
@@ -188,8 +173,10 @@ final class AssistantSession: ObservableObject {
         streamingMarkdown = ""
         elapsedSeconds = nil; requestStartedAt = Date()
         let id = UUID(); requestID = id
+        requestLanguage = preferences.writingLanguage
         requestModel = preferences.model
         let model = requestModel
+        let language = requestLanguage
         let text = input, action = action, additionalInstructions = preferences.instructions(for: action)
         Diagnostics.event("inference_started", action: action.rawValue, mode: "non-thinking")
         task = Task { [weak self] in
@@ -197,6 +184,7 @@ final class AssistantSession: ObservableObject {
             guard !Task.isCancelled, self.requestID == id else { return }
             let started = Date()
             self.inference.useModel(model)
+            self.inference.useWritingLanguage(language)
             do {
                 let result: ModelResult
                 if self.isUITest {

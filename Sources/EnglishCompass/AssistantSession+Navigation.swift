@@ -13,8 +13,11 @@ extension AssistantSession {
 
     func openQuestions() {
         guard phase == .result, !isStreaming, let result else { return }
-        let answers = result.candidates.enumerated().map { "Answer \($0.offset + 1):\n\($0.element)" }
-        let context = (["Task: \(action.title)", "Original text:\n\(input)"] + answers +
+        let answers = result.candidates.enumerated().map { index, text in
+            let direction = index == 1 ? result.revisionDirection.map { " (\($0))" } ?? "" : ""
+            return "Answer \(index + 1)\(direction):\n\(text)"
+        }
+        let context = (["Task: \(actionTitle)", "Original text:\n\(input)"] + answers +
                        result.explanations + [result.summary]).joined(separator: "\n\n")
         questions.configure(context: context, model: requestModel)
         isQuestionOpen = true

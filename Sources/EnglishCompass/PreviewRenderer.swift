@@ -23,9 +23,9 @@ enum PreviewRenderer {
         // Fitted heights: the same measurement loop the live panel uses.
         try saveFitted(session, to: directory.appendingPathComponent("fitted-normal.png"))
         let long = String(repeating: "This sentence is deliberately long so the panel must reach its maximum height and scroll. ", count: 4)
-        session.result = ModelResult(candidates: [long, long, long],
-                                     explanations: ["很长的通用版本。", "很长的口语版本。", "很长的学术版本。"],
-                                     summary: "用于验证内容超过最大高度时窗口停在上限并可以滚动。")
+        session.result = ModelResult(candidates: [long, long],
+                                     explanations: ["很长的通用版本。", "很长的替代表达。"],
+                                     summary: "用于验证内容超过最大高度时窗口停在上限并可以滚动。", revisionDirection: "更易读")
         session.chooseCandidate(0)
         try saveFitted(session, to: directory.appendingPathComponent("fitted-long.png"))
         session.result = WritingFixture.result; session.chooseCandidate(0)

@@ -28,6 +28,29 @@ private final class StubURLProtocol: URLProtocol {
 }
 
 final class NativeInferenceTests: XCTestCase {
+    @MainActor func testWritingLanguageReachesBothTransportModes() async throws {
+        defer { clearStub() }
+        let inference = service()
+        StubURLProtocol.handler = { _ in (401, Data("{}".utf8)) }
+        for language in [WritingLanguage.french, .arabic] {
+            inference.useWritingLanguage(language)
+            for streaming in [false, true] {
+                do {
+                    if streaming {
+                        _ = try await inference.inferStream(text: "你好", action: .writeEnglish, additionalInstructions: "") { _ in }
+                    } else {
+                        _ = try await inference.infer(text: "你好", action: .writeEnglish, additionalInstructions: "")
+                    }
+                    XCTFail("Expected authentication failure from stub")
+                } catch { XCTAssertEqual(error as? AssistantFailure, .cloudAuth) }
+                let raw = try XCTUnwrap(inference.lastRawRequest)
+                XCTAssertTrue(raw.contains("always \(language.name)"))
+                XCTAssertFalse(raw.contains("always English"))
+                XCTAssertFalse(raw.contains("{targetLanguage}"))
+            }
+        }
+    }
+
     @MainActor func testQuestionStreamsMarkdownAndReusesCachedCredential() async throws {
         defer { clearStub() }
         let configuration = URLSessionConfiguration.ephemeral
@@ -101,7 +124,8 @@ final class NativeInferenceTests: XCTestCase {
         defer { defaults.removePersistentDomain(forName: name) }
         let preferences = Preferences(defaults: defaults)
         preferences.model = .plus37
-        let content = "## General\nHello.\n## Conversational\nHi.\n## Academic\nGreetings.\n## Notes\nA note."
+        preferences.writingLanguage = .french
+        let content = "## General\nHello.\n## Direction\n更自然\n## Alternative\nHi.\n## Notes\nA note."
         let payload = String(decoding: try JSONSerialization.data(withJSONObject: ["choices": [["delta": ["content": content]]]]), as: UTF8.self)
         StubURLProtocol.handler = { _ in
             return (200, Data("data: \(payload)\n\ndata: [DONE]\n\n".utf8))
@@ -109,9 +133,12 @@ final class NativeInferenceTests: XCTestCase {
         let session = AssistantSession(preferences: preferences, accessibility: AccessibilityBridge(), inference: service())
         session.input = "Hello."; session.process()
         preferences.model = .max38
+        preferences.writingLanguage = .spanish
         for _ in 0..<200 where session.requestStartedAt != nil { try await Task.sleep(nanoseconds: 5_000_000) }
         XCTAssertEqual(session.requestModel, .plus37)
-        XCTAssertEqual(session.result?.candidates.count, 3)
+        XCTAssertEqual(session.requestLanguage, .french)
+        XCTAssertEqual(session.actionTitle, "Write in French")
+        XCTAssertEqual(session.result?.candidates.count, 2)
         let json = try JSONSerialization.jsonObject(with: Data(try XCTUnwrap(session.rawRequest).utf8)) as? [String: Any]
         XCTAssertEqual(json?["model"] as? String, QwenModel.plus37.rawValue)
         XCTAssertEqual(session.candidateIndex, 0)
@@ -130,7 +157,7 @@ final class NativeInferenceTests: XCTestCase {
             let content = try await inference.inferStream(text: "Please helps me fix this bug.",
                 action: .writeEnglish, additionalInstructions: "") { _ in }
             let result = try CloudAPIContract.parseContent(content, action: .writeEnglish)
-            XCTAssertEqual(result.candidates.count, 3)
+            XCTAssertEqual(result.candidates.count, 2)
             XCTAssertFalse(result.summary.isEmpty)
             XCTAssertFalse(inference.lastRawRequest?.contains(key) == true)
             XCTAssertTrue(inference.lastRawResponse?.contains("[DONE]") == true)
@@ -168,7 +195,7 @@ final class NativeInferenceTests: XCTestCase {
 
     @MainActor func testSuccessfulStreamSessionPublishesRawResponseAndClearsItOnNewSession() async throws {
         defer { clearStub() }
-        let content = "## General\nHello.\n\n## Conversational\nHi.\n\n## Academic\nGreetings.\n\n## Notes\nA short note."
+        let content = "## General\nHello.\n\n## Direction\n更自然\n## Alternative\nHi.\n\n\n## Notes\nA short note."
         let event: [String: Any] = ["choices": [["index": 0, "delta": ["content": content]]]]
         let payload = String(decoding: try JSONSerialization.data(withJSONObject: event), as: UTF8.self)
         let wire = "data: \(payload)\n\ndata: [DONE]\n\n"
@@ -185,7 +212,7 @@ final class NativeInferenceTests: XCTestCase {
         }
         XCTAssertEqual(session.phase, .result)
         XCTAssertNil(session.requestStartedAt, "The actual request must have completed")
-        XCTAssertEqual(session.result?.candidates, ["Hello.", "Hi.", "Greetings."])
+        XCTAssertEqual(session.result?.candidates, ["Hello.", "Hi."])
         XCTAssertEqual(session.rawResponse, wire, "Valid responses must not leave the debug sheet empty")
         XCTAssertNotNil(session.rawRequest)
         XCTAssertFalse(try XCTUnwrap(session.rawRequest).contains("synthetic-key"))
@@ -253,7 +280,7 @@ final class NativeInferenceTests: XCTestCase {
             XCTAssertTrue(raw.contains("usage"))
             XCTAssertFalse(raw.contains(key))
             XCTAssertNotNil(session.result)
-            if action == .writeEnglish { XCTAssertEqual(session.result?.candidates.count, 3) }
+            if action == .writeEnglish { XCTAssertEqual(session.result?.candidates.count, 2) }
             else { XCTAssertEqual(session.result?.candidates.count, 1) }
             XCTAssertEqual(String(JSONDebugView.highlight(raw).characters), raw)
             if action == .writeEnglish,
@@ -405,7 +432,7 @@ final class NativeInferenceTests: XCTestCase {
         defer { inference.cancel() }
         let start = Date()
         let written = try await inference.infer(text: "Please helps me fix this bug.", action: .writeEnglish, additionalInstructions: "")
-        XCTAssertEqual(written.candidates.count, 3)
+        XCTAssertEqual(written.candidates.count, 2)
         XCTAssertEqual(written.candidates[0], "Please help me fix this bug.")
         let translated = try await inference.infer(text: "Do not delete the file.", action: .understandEnglish, additionalInstructions: "")
         XCTAssertEqual(translated.candidates.count, 1)
@@ -420,7 +447,8 @@ final class NativeInferenceTests: XCTestCase {
     }
     @MainActor func testNativeRequestUsesFixedProviderAndCredentialHeader() async throws {
         defer { StubURLProtocol.handler = nil }
-        let content = String(decoding: try JSONEncoder().encode(WritingFixture.result), as: UTF8.self)
+        let fixture = WritingFixture.result
+        let content = "## General\n\(fixture.markdownCandidates[0])\n## Direction\n\(fixture.revisionDirection!)\n## Alternative\n\(fixture.markdownCandidates[1])\n\(fixture.summary)"
         let response: [String: Any] = ["model": "qwen3.7-flash", "choices": [
             ["index": 0, "finish_reason": "stop", "message": ["role": "assistant", "content": content]]]]
         StubURLProtocol.handler = { request in

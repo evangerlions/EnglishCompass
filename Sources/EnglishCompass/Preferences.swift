@@ -47,6 +47,7 @@ enum ShortcutKind: String, CaseIterable {
 
 @MainActor
 final class Preferences: ObservableObject {
+    @Published var writingLanguage: WritingLanguage { didSet { save() } }
     @Published var model: QwenModel { didSet { save() } }
     @Published var writeInstructions: String { didSet { save() } }
     @Published var understandInstructions: String { didSet { save() } }
@@ -72,6 +73,7 @@ final class Preferences: ObservableObject {
     private let defaults: UserDefaults
     init(defaults: UserDefaults = .standard) {
         self.defaults = defaults
+        writingLanguage = WritingLanguage(rawValue: defaults.string(forKey: "writingLanguage") ?? "") ?? .english
         model = QwenModel(rawValue: defaults.string(forKey: "qwenModel") ?? "") ?? .flash37
         // Retire mode settings and migrate the old shared prompt into both
         // action-specific fields without losing the user's existing preference.
@@ -131,6 +133,7 @@ final class Preferences: ObservableObject {
         defaults.data(forKey: key).flatMap { try? JSONDecoder().decode(Shortcut.self, from: $0) }
     }
     private func save() {
+        defaults.set(writingLanguage.rawValue, forKey: "writingLanguage")
         defaults.set(model.rawValue, forKey: "qwenModel")
         defaults.set(writeInstructions, forKey: "writeInstructions")
         defaults.set(understandInstructions, forKey: "understandInstructions")

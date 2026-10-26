@@ -7,7 +7,7 @@ import AssistantCore
 @MainActor private final class PausedStreamingInference: InferencePerforming {
     var usesStreaming: Bool { true }
     var resume: CheckedContinuation<String, Never>?
-    let content = "## General\nFirst answer.\n## Conversational\nSecond answer.\n## Academic\nThird answer.\n## Notes\n- A note."
+    let content = "## General\nFirst answer.\n## Direction\n更自然\n## Alternative\nSecond answer.\n## Notes\n- A note."
     func infer(text: String, action: AssistantAction, additionalInstructions: String) async throws -> ModelResult {
         throw AssistantFailure.cloudUnavailable
     }
@@ -92,28 +92,40 @@ final class ResultInteractionTests: XCTestCase {
         XCTAssertTrue(blocks[2].isDivider)
     }
 
+    func testBestEffortKeepsDirectionOutOfCopyableAnswers() {
+        let partial = "## General\nFirst **answer**.\n## Direction\n更适合协作\n## Alternative\nSecond *answer*."
+        let result = BestEffortResult.make(content: partial, action: .writeEnglish)
+        XCTAssertEqual(result.candidates, ["First answer.", "Second answer."])
+        XCTAssertEqual(result.revisionDirection, "更适合协作")
+        let oneAnswer = BestEffortResult.make(content: "## General\nFirst answer.\n## Direction\n更适合协作", action: .writeEnglish)
+        XCTAssertEqual(oneAnswer.candidates, ["First answer."])
+        let metadataOnly = BestEffortResult.make(content: "## Direction\n更适合协作", action: .writeEnglish)
+        XCTAssertTrue(metadataOnly.candidates.isEmpty)
+    }
+
     @MainActor func testStreamingSelectionDoesNotResetAndCopyTargetTracksDeltas() {
         let session = makeSession()
         session.phase = .result
-        session.streamingMarkdown = "## General\nFirst **answer**.\n\n## Conversational\nSecond"
+        session.streamingMarkdown = "## General\nFirst **answer**.\n\n## Direction\n更自然\n## Alternative\nSecond"
         XCTAssertNil(session.candidateIndex)
         _ = session.liveWriteSections
         XCTAssertNil(session.candidateIndex, "Reading view state must not mutate selection")
         session.refreshStreamingSelection()
         XCTAssertEqual(session.candidateIndex, 0)
         session.chooseStreamingCandidate(1, plain: "Second")
-        session.streamingMarkdown! += " answer.\n\n## Academic\nThird answer."
+        session.streamingMarkdown! += " answer.\n"
         session.refreshStreamingSelection()
         XCTAssertEqual(session.candidateIndex, 1)
         XCTAssertEqual(session.suggestion, "Second answer.")
+        XCTAssertEqual(session.liveWriteSections.direction ?? session.result?.revisionDirection, "更自然")
         let board = NSPasteboard.withUniqueName()
         defer { board.releaseGlobally() }
         session.copy(to: board)
         XCTAssertEqual(board.string(forType: .string), "Second answer.")
         session.moveCandidate(1)
-        XCTAssertEqual(session.candidateIndex, 2)
+        XCTAssertEqual(session.candidateIndex, 1)
         session.moveCandidate(1)
-        XCTAssertEqual(session.candidateIndex, 2)
+        XCTAssertEqual(session.candidateIndex, 1)
     }
 
     @MainActor func testSelectedStreamingCardSurvivesFinalCommit() async throws {
@@ -135,6 +147,7 @@ final class ResultInteractionTests: XCTestCase {
         XCTAssertFalse(session.isStreaming)
         XCTAssertEqual(session.candidateIndex, 1)
         XCTAssertEqual(session.suggestion, "Second answer.")
+        XCTAssertEqual(session.liveWriteSections.direction ?? session.result?.revisionDirection, "更自然")
     }
 
     @MainActor func testBothViewsUseSharedMarkdownAndBodyObserverIsActuallyInstalled() async throws {

@@ -2,14 +2,15 @@ import Foundation
 
 /// Tolerant parser for the writing response.
 ///
-/// Only the three copy-ready answers are structurally required, because those
-/// are what the cards copy and replace. Everything else (## Notes, ## Summary
+/// Two answers and a separate card-title direction are structurally required.
+/// Only the answer bodies are copied or used for replacement. Everything else (## Notes, ## Summary
 /// or any trailing prose) is treated as one Markdown body and shown as-is; it
 /// is never used for copy, so its exact shape does not matter. This keeps a
 /// response valid even when the provider reorders, merges or truncates the
 /// explanatory sections.
 public enum WritingMarkdownPayload {
-    static let answerHeadings = ["General", "Conversational", "Academic"]
+    public static let answerHeadings = ["General", "Alternative"]
+    public static let directionHeading = "Direction"
 
     static func parse(_ content: String) throws -> ModelResult {
         let normalized = content.replacingOccurrences(of: "\r\n", with: "\n")
@@ -21,6 +22,7 @@ public enum WritingMarkdownPayload {
         // Split into sections by our fixed headings only.
         var answerBodies: [String: String] = [:]
         var bodySections: [(heading: String, text: String)] = []
+        var direction: String?
         var current: String?
         var lines: [String] = []
 
@@ -29,6 +31,8 @@ public enum WritingMarkdownPayload {
             let body = lines.joined(separator: "\n").trimmingCharacters(in: .whitespacesAndNewlines)
             if answerHeadings.contains(heading) {
                 answerBodies[heading] = body
+            } else if heading == directionHeading {
+                direction = body
             } else if !body.isEmpty {
                 bodySections.append((heading, body))
             }
@@ -42,6 +46,7 @@ public enum WritingMarkdownPayload {
                 current = heading
             } else if let heading = otherHeading(line) {
                 commit()
+                if heading == directionHeading, direction != nil { throw AssistantFailure.invalidResult }
                 current = heading
             } else if current != nil {
                 lines.append(line)
@@ -52,7 +57,9 @@ public enum WritingMarkdownPayload {
         }
         commit()
 
-        // The three answers are the only required, copy-bound content.
+        guard let direction, let label = directionLabel(direction) else { throw AssistantFailure.invalidResult }
+
+        // Metadata is never part of the copy-bound answers.
         let markdown = try answerHeadings.map { heading -> String in
             guard let body = answerBodies[heading] else { throw AssistantFailure.invalidResult }
             let plain = plainText(body)
@@ -69,7 +76,7 @@ public enum WritingMarkdownPayload {
 
         return try ModelResult(candidates: candidates, explanations: [],
                                summary: body, highlights: [],
-                               markdownCandidates: markdown).validated()
+                               markdownCandidates: markdown, revisionDirection: label).validated()
     }
 
     /// True when the content uses one of our fixed level-2 headings, even if
@@ -87,7 +94,7 @@ public enum WritingMarkdownPayload {
     /// example a `### Background` the user wrote and the model translated) is
     /// ordinary content of the current section, never a new section.
     private static func otherHeading(_ line: String) -> String? {
-        heading(line, candidates: bodyHeadings)
+        heading(line, candidates: [directionHeading] + bodyHeadings)
     }
 
     static let bodyHeadings = ["Notes", "Summary"]
@@ -97,6 +104,15 @@ public enum WritingMarkdownPayload {
         guard trimmed.hasPrefix("##") else { return nil }
         let title = String(trimmed.drop(while: { $0 == "#" })).trimmingCharacters(in: .whitespaces)
         return candidates.first { $0.caseInsensitiveCompare(title) == .orderedSame }
+    }
+
+    /// A short, free-form Chinese label chosen by the model, never an answer.
+    public static func directionLabel(_ source: String) -> String? {
+        let label = plainText(source)
+        guard !label.isEmpty, label.count <= 40,
+              !label.contains("\n"), !label.contains("\r"),
+              !label.contains("<think"), !label.contains("</think>") else { return nil }
+        return label
     }
 
     /// Strips inline markup (`**`, `` ` ``, links) for copy and replacement while

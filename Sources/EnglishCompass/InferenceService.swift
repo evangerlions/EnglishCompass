@@ -22,6 +22,7 @@ protocol InferencePerforming: AnyObject {
                      onDelta: @escaping @MainActor (String) -> Void) async throws -> String
     func cancel()
     func prepareCredential()
+    func useWritingLanguage(_ language: WritingLanguage)
     func useModel(_ model: QwenModel)
     func answerQuestion(context: String, messages: [QuestionMessage],
                         onDelta: @escaping @MainActor (String) -> Void) async throws -> String
@@ -37,6 +38,7 @@ extension InferencePerforming {
     }
     func prepareCredential() {}
     func useModel(_ model: QwenModel) {}
+    func useWritingLanguage(_ language: WritingLanguage) {}
     func answerQuestion(context: String, messages: [QuestionMessage],
                         onDelta: @escaping @MainActor (String) -> Void) async throws -> String {
         throw AssistantFailure.cloudUnavailable
@@ -48,6 +50,7 @@ final class InferenceService: InferencePerforming {
     let usesStreaming = true
     private let session: URLSession
     private let credential: () throws -> String
+    private var selectedWritingLanguage: WritingLanguage = .english
     private var selectedModel: QwenModel = .flash37
     // Process-local only: never persist or log this copy of the Keychain secret.
     private var cachedCredential: String?
@@ -71,6 +74,7 @@ final class InferenceService: InferencePerforming {
         self.session = URLSession(configuration: configuration, delegate: CloudSessionDelegate(), delegateQueue: nil)
     }
     func useModel(_ model: QwenModel) { selectedModel = model }
+    func useWritingLanguage(_ language: WritingLanguage) { selectedWritingLanguage = language }
     func cancel() {
         operationID = nil
         active?.cancel()
@@ -95,7 +99,7 @@ final class InferenceService: InferencePerforming {
         try CloudAPIContract.validateInput(text)
         let key = try cachedCredential ?? credential()
         let request = try CloudAPIContract.request(text: text, action: action, additionalInstructions: additionalInstructions,
-                                                   key: key, model: selectedModel.rawValue)
+                                                   key: key, model: selectedModel.rawValue, targetLanguage: selectedWritingLanguage)
         lastRawRequest = request.httpBody.flatMap { String(data: $0, encoding: .utf8) }
         lastRawResponse = nil
         cachedCredential = key
@@ -159,7 +163,7 @@ final class InferenceService: InferencePerforming {
         let key = try cachedCredential ?? credential()
         let request = try CloudAPIContract.request(text: text, action: action,
                                                    additionalInstructions: additionalInstructions,
-                                                   key: key, stream: true, model: selectedModel.rawValue)
+                                                   key: key, stream: true, model: selectedModel.rawValue, targetLanguage: selectedWritingLanguage)
         cachedCredential = key
         return try await performStream(request: request, action: action.rawValue, onDelta: onDelta)
     }

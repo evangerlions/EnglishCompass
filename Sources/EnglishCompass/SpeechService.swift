@@ -1,5 +1,6 @@
 import AVFoundation
 import Combine
+import AssistantCore
 import SwiftUI
 
 /// On-device English speech. Nothing is uploaded; voices come from macOS.
@@ -64,7 +65,8 @@ final class SpeechService: NSObject, ObservableObject, AVSpeechSynthesizerDelega
     }
 
     /// The saved voice if it is still installed, otherwise the best one for the accent.
-    func resolvedVoice() -> AVSpeechSynthesisVoice? {
+    func resolvedVoice(language: WritingLanguage = .english) -> AVSpeechSynthesisVoice? {
+        if language != .english { return AVSpeechSynthesisVoice(language: language.speechLocale) }
         if !preferences.speechVoice.isEmpty,
            let saved = AVSpeechSynthesisVoice(identifier: preferences.speechVoice),
            saved.language == preferences.speechAccent {
@@ -75,19 +77,19 @@ final class SpeechService: NSObject, ObservableObject, AVSpeechSynthesizerDelega
     }
 
     /// Speaks the text. Calling again with the same text while it plays stops it.
-    func toggle(_ text: String) {
+    func toggle(_ text: String, language: WritingLanguage = .english) {
         let clean = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !clean.isEmpty else { return }
         if speakingText == clean { stop(); return }
-        speak(clean)
+        speak(clean, language: language)
     }
 
-    func speak(_ text: String) {
+    func speak(_ text: String, language: WritingLanguage = .english) {
         let clean = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !clean.isEmpty else { return }
         if synthesizer.isSpeaking { synthesizer.stopSpeaking(at: .immediate) }
         let utterance = AVSpeechUtterance(string: clean)
-        utterance.voice = resolvedVoice()
+        utterance.voice = resolvedVoice(language: language)
         utterance.rate = preferences.speechRate
         speakingText = clean
         synthesizer.speak(utterance)
@@ -129,11 +131,12 @@ struct SpeechPreviewButton: View {
 struct SpeakButton: View {
     @ObservedObject var speech: SpeechService
     let text: String
+    var language: WritingLanguage = .english
     var tint: Color = .secondary
 
     var body: some View {
         let playing = speech.speakingText == text.trimmingCharacters(in: .whitespacesAndNewlines)
-        Button { speech.toggle(text) } label: {
+        Button { speech.toggle(text, language: language) } label: {
             Image(systemName: playing ? "stop.circle.fill" : "speaker.wave.2.fill")
                 .font(.system(size: 13, weight: .medium))
                 .foregroundStyle(playing ? tint : Color.secondary)

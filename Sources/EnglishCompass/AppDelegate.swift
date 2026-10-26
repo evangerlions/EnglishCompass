@@ -57,7 +57,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         item = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
         item.button?.image = NSImage(systemSymbolName: "text.badge.checkmark", accessibilityDescription: "English Compass")
         let menu = NSMenu()
-        add("Write in English", action: #selector(write), to: menu)
+        add("Write / Translate", action: #selector(write), to: menu)
         add("Understand English", action: #selector(understand), to: menu)
         add("Read Selection Aloud", action: #selector(readAloudMenu), to: menu)
         add("Manual input...", action: #selector(manual), to: menu)
@@ -98,7 +98,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     private func readAloud() {
         if speech.isSpeaking { speech.stop(); return }
         // While the assistant panel is frontmost, read what it shows instead.
-        if panel?.isKeyWindow == true, let text = session.speechText { speech.speak(text); return }
+        if panel?.isKeyWindow == true, session.speechText != nil { session.speakCurrent(); return }
         readAloudTask?.cancel()
         readAloudTask = Task { [weak self] in
             guard let self else { return }

@@ -60,6 +60,6 @@ public struct StreamingSections {
 }
 
 public extension StreamingSections {
-    static let writeHeadings = ["General", "Conversational", "Academic", "Notes", "Summary"]
+    static let writeHeadings = ["General", "Direction", "Alternative", "Notes", "Summary"]
     static let understandHeadings = ["Translation", "Notes"]
 }

@@ -12,12 +12,14 @@ public struct ModelResult: Codable, Equatable, Sendable {
     public var summary: String
     public var highlights: [[String]]
     public var markdownCandidates: [String]
-    public init(candidates: [String], explanations: [String] = [], summary: String = "", highlights: [[String]] = [], markdownCandidates: [String] = []) {
+    public var revisionDirection: String?
+    public init(candidates: [String], explanations: [String] = [], summary: String = "", highlights: [[String]] = [], markdownCandidates: [String] = [], revisionDirection: String? = nil) {
         self.candidates = candidates
         self.explanations = explanations
         self.summary = summary
         self.highlights = highlights
         self.markdownCandidates = markdownCandidates
+        self.revisionDirection = revisionDirection
     }
     public func validated() throws -> ModelResult {
         let rich = candidates.count == 3
@@ -35,6 +37,7 @@ public struct ModelResult: Codable, Equatable, Sendable {
               highlights.isEmpty || (highlights.count == candidates.count && highlights.enumerated().allSatisfy { index, terms in
                   terms.count <= 3 && terms.allSatisfy { !$0.isEmpty && candidates[index].contains($0) }
               }),
+              revisionDirection.map { candidates.count == 2 && WritingMarkdownPayload.directionLabel($0) != nil } ?? true,
               candidates.allSatisfy({ !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }),
               (candidates + explanations + [summary] + highlights.flatMap { $0 } + markdownCandidates).allSatisfy({ !$0.contains("<think") && !$0.contains("</think") })
         else { throw AssistantFailure.invalidResult }

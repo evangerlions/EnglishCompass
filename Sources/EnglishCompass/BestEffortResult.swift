@@ -17,17 +17,21 @@ enum BestEffortResult {
         if action == .writeEnglish {
             var sections = StreamingSections()
             sections.ingest(trimmed, known: StreamingSections.writeHeadings)
-            let md = ["General", "Conversational", "Academic"].compactMap { sections.displayOrNil($0) }
-            // If all three arrived, surface them directly even if strict parsing
-            // rejected some other detail (Notes/Summary shape, truncation...).
-            if md.count == 3 {
+            let md = WritingMarkdownPayload.answerHeadings.compactMap { sections.displayOrNil($0) }
+            // Keep recognized answer bodies separate from metadata even when truncated.
+            if !md.isEmpty {
                 let candidates = md.map { WritingMarkdownPayload.plainText($0) }
-                let body = [sections.displayOrNil("Notes"), sections.displayOrNil("Summary")]
-                    .compactMap { $0 }.map { "## Notes\n\($0)" }.joined(separator: "\n\n")
+                let body = ["Notes", "Summary"].compactMap { heading in
+                    sections.displayOrNil(heading).map { "## \(heading)\n\($0)" }
+                }.joined(separator: "\n\n")
                 if candidates.allSatisfy({ !$0.isEmpty }) {
                     return ModelResult(candidates: candidates, explanations: [], summary: body,
-                                       highlights: [], markdownCandidates: md)
+                                       highlights: [], markdownCandidates: md,
+                                       revisionDirection: md.count == 2 ? sections.displayOrNil("Direction").flatMap { WritingMarkdownPayload.directionLabel($0) } : nil)
                 }
+            }
+            if sections.order.contains(WritingMarkdownPayload.directionHeading) {
+                return ModelResult(candidates: [], summary: trimmed)
             }
             // Otherwise show the whole text as one answer so nothing is lost.
             let plain = WritingMarkdownPayload.plainText(trimmed)

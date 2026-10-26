@@ -62,8 +62,21 @@ does not source shell startup files.
 
 ## Actions
 
-Writing shows three ordered versions: general, conversational and academic.
-Each has a brief explanation and Copy button, followed by an overall explanation.
+Settings → Language chooses the writing target language (English by default).
+The initial catalog is English, Simplified Mandarin Chinese, Hindi, Spanish,
+Modern Standard Arabic, French, Bengali, Portuguese, Indonesian and Urdu,
+based on total speakers in the 2026 Ethnologue ranking, plus Japanese and Korean.
+Target language is
+substituted into a shared prompt template and captured when a request starts.
+The Lab inspector has the same selector with its own saved preference.
+Directions and explanations remain Chinese; Understand English is unchanged.
+Answer speech uses the target language's macOS voice when available.
+
+
+Writing shows two candidates: a general version and an alternative whose improvement
+strategy is chosen by the model. The alternative card title comes from a separate
+Chinese revision-direction field. Both answers have Copy buttons, followed by
+explanatory notes. Bold marks error corrections; italics marks expression improvements.
 Use Up/Down to select and Return to copy while viewing writing results. Input
 editing keeps normal native keyboard behavior. Emphasis is display-only: copying
 or replacing uses the exact plain-text answer, not explanations or bold markers.
