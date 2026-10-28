@@ -4,7 +4,7 @@ import AssistantCore
 
 /// Completed answers appear together; streaming answers appear as they start.
 /// ↑ ↓ moves the highlight between visible cards.
-/// Copy and replacement always use the exact plain-text answer, never the markup.
+/// Copy always uses the exact plain-text answer, never the markup.
 struct WritingResultsView: View {
     @ObservedObject var session: AssistantSession
     @FocusState private var keyboardFocused: Bool
@@ -269,18 +269,8 @@ struct WritingResultsView: View {
             keycap("↵").padding(.leading, 6); Text("复制")
             keycap("Space").padding(.leading, 6); Text("朗读")
             Spacer()
-            if session.hasCapturedTarget { replaceButton }
         }
         .font(.system(size: 11)).foregroundStyle(.secondary)
-    }
-
-    @ViewBuilder private var replaceButton: some View {
-        let button = Button("Replace selected answer") { session.replace() }
-            .controlSize(.large)
-            .disabled(!session.canReplace)
-            .accessibilityIdentifier("replace_button")
-        if #available(macOS 26.0, *) { button.buttonStyle(.glass) }
-        else { button.buttonStyle(.bordered) }
     }
 
     private func keycap(_ text: String) -> some View {

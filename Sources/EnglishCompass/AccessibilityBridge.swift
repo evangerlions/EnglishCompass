@@ -50,29 +50,23 @@ final class AccessibilityBridge {
         }
 
         let selected = selection?.text ?? ""
-        let selectionSource = selection?.source ?? focusedElement
-        let element = focusedElement
-        let editable = [kAXTextFieldRole, kAXTextAreaRole, kAXComboBoxRole].contains(role)
-        let value = editable ? attribute(element, kAXValueAttribute) as? String : nil
+        let element: AXUIElement
         let snapshot: DraftSnapshot
         let writebackEligible: Bool
-        if !selected.isEmpty {
-            // Prefer the source element that actually yielded the selection.
-            let sourceValue = editable ? (value ?? attribute(selectionSource, kAXValueAttribute) as? String) : nil
-            if let sourceValue, sourceValue == selected,
-               let range = selectedRange(selectionSource),
-               let draft = try? DraftSnapshot(fullText: sourceValue, range: range), draft.input == selected {
-                snapshot = draft
-                writebackEligible = true
-            } else if let sourceValue, !sourceValue.isEmpty {
-                snapshot = try DraftSnapshot(fullText: sourceValue, range: NSRange(location: 0, length: (sourceValue as NSString).length))
-                writebackEligible = true
-            } else {
-                // Read-only selections (web pages, labels) — translate only.
-                snapshot = try DraftSnapshot(fullText: selected, range: NSRange(location: 0, length: (selected as NSString).length))
-                writebackEligible = false
-            }
+        if let selection, !selected.isEmpty {
+            // Read the value and range from the same element that supplied the
+            // selection. A partial selection must never expand to the whole field.
+            element = selection.source
+            let sourceRole = attribute(element, kAXRoleAttribute) as? String ?? ""
+            let editable = [kAXTextFieldRole, kAXTextAreaRole, kAXComboBoxRole].contains(sourceRole)
+            let captured = try Self.selectionSnapshot(
+                selectedText: selected,
+                fullText: editable ? attribute(element, kAXValueAttribute) as? String : nil,
+                selectedRange: editable ? selectedRange(element) : nil)
+            snapshot = captured.snapshot
+            writebackEligible = captured.writebackEligible
         } else {
+            element = focusedElement
             // 3. AX could not read the selection. Fall back to simulating Cmd+C
             //    (the approach used by dictionary/lookup apps). The result is
             //    read-only; writeback stays on the AX path.
@@ -86,6 +80,23 @@ final class AccessibilityBridge {
         }
         let window = attribute(application, kAXFocusedWindowAttribute).map { $0 as! AXUIElement }
         return CapturedTarget(app: app, window: window, element: element, snapshot: snapshot, anchor: bounds(element), writebackEligible: writebackEligible)
+    }
+
+    /// Match the reported selection against its own editor value and UTF-16 range.
+    /// If any metadata is unavailable or inconsistent, keep only the selected text.
+    static func selectionSnapshot(selectedText: String, fullText: String?, selectedRange: NSRange?) throws
+        -> (snapshot: DraftSnapshot, writebackEligible: Bool) {
+        guard !selectedText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+            throw AssistantFailure.noText
+        }
+        if let fullText, let selectedRange,
+           let snapshot = try? DraftSnapshot(fullText: fullText, range: selectedRange),
+           snapshot.input.utf16.elementsEqual(selectedText.utf16) {
+            return (snapshot, true)
+        }
+        let snapshot = try DraftSnapshot(fullText: selectedText,
+                                         range: NSRange(location: 0, length: selectedText.utf16.count))
+        return (snapshot, false)
     }
 
     /// Selected text only, for Read Aloud. Uses the same AX lookups as capture

@@ -176,10 +176,6 @@ struct ResultView: View {
             HStack {
                 Button("Copy") { session.copy() }.controlSize(.large).accessibilityIdentifier("copy_button")
                 Spacer()
-                if session.action == .writeEnglish, session.hasCapturedTarget {
-                    Button("Replace") { session.replace() }.buttonStyle(PrimaryButtonStyle())
-                        .disabled(!session.canReplace).accessibilityIdentifier("replace_button")
-                }
             }
         } else {
             Spacer(minLength: 0)
