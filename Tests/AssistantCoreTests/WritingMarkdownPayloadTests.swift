@@ -135,5 +135,9 @@ final class WritingMarkdownPayloadTests: XCTestCase {
         XCTAssertTrue(prompt.contains("Leave unchanged wording unmarked"))
         XCTAssertTrue(prompt.contains("never the entire answer"))
         XCTAssertTrue(prompt.contains("never insert them inside protected code"))
+        XCTAssertTrue(prompt.contains("input 'Please helps me fix this bug.'"))
+        XCTAssertTrue(prompt.contains("General: 'Please **help** me fix this bug.'"))
+        XCTAssertTrue(prompt.contains("Alternative: 'Please **help** me *resolve this issue*.'"))
+        XCTAssertTrue(prompt.contains("always use the selected target language for actual answers"))
     }
 }
