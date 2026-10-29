@@ -12,7 +12,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     private lazy var speech = SpeechService(preferences: preferences)
     private var session: AssistantSession!
     private var item: NSStatusItem!
-    private var panel: NSPanel?
+    private var panel: NSWindow?
     private var settingsWindow: NSWindow?
     private var readAloudTask: Task<Void, Never>?
     private var fitter: PanelAutoFitter?
@@ -22,7 +22,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         NSApp.mainMenu = ApplicationMenus.make()
         session = AssistantSession(preferences: preferences, accessibility: accessibility, inference: inference,
                                    speech: speech)
-        session.onClose = { [weak self] in self?.panel?.orderOut(nil) }
+        session.onClose = { [weak self] in
+            guard let self else { return }
+            self.panel?.orderOut(nil)
+            self.updateDockVisibility()
+        }
         session.onSettings = { [weak self] in self?.showSettings() }
         let arguments = ProcessInfo.processInfo.arguments
         if arguments.contains("--cloud-smoke-test") {
@@ -124,12 +128,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
 
     private func presentAssistant(anchor: CGRect?) {
         if panel == nil {
-            let window = NSPanel(contentRect: NSRect(x: 0, y: 0, width: 540, height: 470),
-                                 styleMask: [.titled, .closable, .fullSizeContentView], backing: .buffered, defer: false)
+            let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 540, height: 470),
+                                  styleMask: [.titled, .closable, .fullSizeContentView], backing: .buffered, defer: false)
             window.title = "English Compass"
             window.titleVisibility = .hidden; window.titlebarAppearsTransparent = true
             AssistantWindowPresentation.configure(window)
-            window.isFloatingPanel = true; window.level = .floating; window.isReleasedWhenClosed = false
+            window.isReleasedWhenClosed = false
             window.delegate = self
             window.isOpaque = false
             window.backgroundColor = .clear
@@ -149,8 +153,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             panel?.setFrameOrigin(CGPoint(x: min(max(x, bounds.minX), bounds.maxX - 540),
                                           y: min(max(y, bounds.minY), bounds.maxY - 470)))
         }
-        NSApp.activate(ignoringOtherApps: true)
-        panel?.makeKeyAndOrderFront(nil)
+        if let panel { AssistantWindowPresentation.restore(panel) }
     }
     /// Resizes the panel keeping its top edge fixed, clamped to the visible screen.
     private func resizePanel(to height: CGFloat) {
@@ -167,6 +170,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 820, height: 620),
                                   styleMask: [.titled, .closable, .miniaturizable], backing: .buffered, defer: false)
             window.title = "English Compass Settings"; window.isReleasedWhenClosed = false
+            window.delegate = self
+            AssistantWindowPresentation.configure(window)
             window.contentView = NSHostingView(rootView: SettingsView(preferences: preferences, accessibility: accessibility,
                                                                      onShortcut: updateShortcut,
                                                                      onKeySaved: inference.useSavedCredential,
@@ -176,8 +181,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                                                                      speech: speech))
             window.center(); settingsWindow = window
         }
-        NSApp.activate(ignoringOtherApps: true)
-        settingsWindow?.makeKeyAndOrderFront(nil)
+        if let settingsWindow { AssistantWindowPresentation.restore(settingsWindow) }
     }
     private func updateShortcut(_ kind: ShortcutKind, _ shortcut: Shortcut) -> String? {
         let old = preferences.allShortcuts
@@ -192,6 +196,21 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             return error.localizedDescription
         }
     }
+    private func updateDockVisibility(excluding closingWindow: NSWindow? = nil) {
+        AssistantWindowPresentation.updateDockVisibility(
+            for: [panel, settingsWindow].compactMap { $0 }, excluding: closingWindow)
+    }
+
+    func windowWillClose(_ notification: Notification) {
+        guard let window = notification.object as? NSWindow else { return }
+        updateDockVisibility(excluding: window)
+    }
+
+    func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {
+        // Only the explicit Quit command stops the status item and global shortcuts.
+        false
+    }
+
     func windowShouldClose(_ sender: NSWindow) -> Bool {
         if sender === panel { session.cancel(); return false }
         return true

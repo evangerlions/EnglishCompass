@@ -20,8 +20,13 @@ final class WindowPresentationTests: XCTestCase {
         let lab = NSWindow(contentRect: rect, styleMask: [.titled, .closable], backing: .buffered, defer: false)
         panel.isReleasedWhenClosed = false; lab.isReleasedWhenClosed = false
         defer { panel.close(); lab.close() }
+        panel.isFloatingPanel = true; panel.level = .floating
+        lab.level = .floating
         AssistantWindowPresentation.configure(panel)
         AssistantWindowPresentation.configure(lab)
+        XCTAssertFalse(panel.isFloatingPanel)
+        XCTAssertEqual(panel.level, .normal)
+        XCTAssertEqual(lab.level, .normal)
         XCTAssertFalse(panel.hidesOnDeactivate)
         XCTAssertFalse(lab.hidesOnDeactivate)
         panel.orderFront(nil)
@@ -29,6 +34,55 @@ final class WindowPresentationTests: XCTestCase {
         XCTAssertTrue(panel.isVisible, "Losing keyboard focus must not dismiss the panel")
         panel.orderOut(nil)
         XCTAssertFalse(panel.isVisible, "Explicit close/hide remains possible")
+    }
+
+    @MainActor func testDockIsHiddenWithoutOpenWindows() {
+        XCTAssertEqual(AssistantWindowPresentation.activationPolicy(for: []), .accessory)
+        let window = NSWindow(contentRect: NSRect(x: 200, y: 200, width: 540, height: 300),
+                              styleMask: [.titled, .closable], backing: .buffered, defer: false)
+        window.isReleasedWhenClosed = false
+        defer { window.close() }
+        window.orderOut(nil)
+        XCTAssertEqual(AssistantWindowPresentation.activationPolicy(for: [window]), .accessory)
+    }
+
+    @MainActor func testDockStaysVisibleOnFocusLossUntilLastWindowCloses() {
+        let window = NSWindow(contentRect: NSRect(x: 200, y: 200, width: 540, height: 300),
+                              styleMask: [.titled, .closable], backing: .buffered, defer: false)
+        window.isReleasedWhenClosed = false
+        defer { window.close() }
+        AssistantWindowPresentation.configure(window)
+        window.orderFront(nil)
+        window.resignKey()
+        XCTAssertEqual(AssistantWindowPresentation.activationPolicy(for: [window]), .regular)
+        XCTAssertEqual(AssistantWindowPresentation.activationPolicy(for: [window], excluding: window), .accessory)
+    }
+
+    @MainActor func testClosingAssistantKeepsDockWhenSettingsRemainOpen() {
+        let rect = NSRect(x: 200, y: 200, width: 540, height: 300)
+        let assistant = NSWindow(contentRect: rect, styleMask: [.titled, .closable], backing: .buffered, defer: false)
+        let settings = NSWindow(contentRect: rect, styleMask: [.titled, .closable], backing: .buffered, defer: false)
+        assistant.isReleasedWhenClosed = false; settings.isReleasedWhenClosed = false
+        defer { assistant.close(); settings.close() }
+        assistant.orderFront(nil); settings.orderFront(nil)
+        XCTAssertEqual(AssistantWindowPresentation.activationPolicy(for: [assistant, settings], excluding: assistant), .regular)
+        settings.orderOut(nil)
+        XCTAssertEqual(AssistantWindowPresentation.activationPolicy(for: [assistant, settings], excluding: assistant), .accessory)
+    }
+
+    @MainActor func testRestoreShowsDockAgainAfterLastWindowIsHidden() {
+        let application = NSApplication.shared
+        let originalPolicy = application.activationPolicy()
+        let window = NSWindow(contentRect: NSRect(x: 200, y: 200, width: 540, height: 300),
+                              styleMask: [.titled, .closable], backing: .buffered, defer: false)
+        window.isReleasedWhenClosed = false
+        defer { window.close(); application.setActivationPolicy(originalPolicy) }
+        window.orderOut(nil)
+        AssistantWindowPresentation.updateDockVisibility(for: [window])
+        XCTAssertEqual(application.activationPolicy(), .accessory)
+        AssistantWindowPresentation.restore(window)
+        XCTAssertEqual(application.activationPolicy(), .regular)
+        XCTAssertTrue(window.isVisible)
     }
 
     @MainActor func testReopenRestoresHiddenWindowWithoutResettingSession() {
