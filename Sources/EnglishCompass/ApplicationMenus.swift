@@ -1,6 +1,6 @@
 import AppKit
 
-/// Nil targets route standard editing commands to the focused responder.
+/// Nil targets route standard commands through the focused responder chain.
 @MainActor
 enum ApplicationMenus {
     static func make() -> NSMenu {
@@ -11,10 +11,24 @@ enum ApplicationMenus {
         appItem.submenu = app
         main.addItem(appItem)
 
+        let fileItem = NSMenuItem(title: "File", action: nil, keyEquivalent: "")
+        let file = NSMenu(title: "File")
+        file.addItem(closeWindowItem())
+        fileItem.submenu = file
+        main.addItem(fileItem)
+
         let editItem = NSMenuItem(title: "Edit", action: nil, keyEquivalent: "")
         editItem.submenu = editMenu()
         main.addItem(editItem)
         return main
+    }
+
+    /// Uses the same delegate-controlled close path as the window's close button.
+    /// A nil target lets AppKit choose the focused window rather than quitting.
+    static func closeWindowItem() -> NSMenuItem {
+        let item = NSMenuItem(title: "Close Window", action: #selector(NSWindow.performClose(_:)), keyEquivalent: "w")
+        item.keyEquivalentModifierMask = .command
+        return item
     }
 
     /// Standard Edit menu. Nil targets route editing commands to the focused

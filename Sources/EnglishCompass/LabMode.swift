@@ -100,6 +100,8 @@ final class LabAppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         fileMenu.addItem(item(title: "Understand English", key: "2", action: #selector(chooseUnderstand)))
         fileMenu.addItem(.separator())
         fileMenu.addItem(item(title: "Run", key: "\r", action: #selector(run)))
+        fileMenu.addItem(.separator())
+        fileMenu.addItem(ApplicationMenus.closeWindowItem())
         file.submenu = fileMenu
         menu.addItem(file)
 
