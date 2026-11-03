@@ -20,6 +20,7 @@ final class LabAppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     private var preferences: Preferences!
     private var keyAvailable = false
     private var inspectorWindow: NSWindow?
+    private var diffDemoWindow: NSWindow?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         NSApp.setActivationPolicy(.regular)
@@ -63,6 +64,7 @@ final class LabAppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         panel = window
         NSApp.activate(ignoringOtherApps: true)
         window.makeKeyAndOrderFront(nil)
+        if ProcessInfo.processInfo.arguments.contains("--diff-demo") { showDiffDemo() }
         print(key == nil
               ? "event=lab_started key=missing hint=export \(Self.keyVariable) in ~/.zshrc and relaunch from a new Terminal"
               : "event=lab_started key=environment")
@@ -112,6 +114,7 @@ final class LabAppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         let debug = NSMenuItem()
         let debugMenu = NSMenu(title: "Debug")
         debugMenu.addItem(item(title: "Inspector", key: "i", modifiers: [.command, .option], action: #selector(showInspector)))
+        debugMenu.addItem(item(title: "Diff Demo", key: "d", modifiers: [.command, .option], action: #selector(showDiffDemo)))
         debug.submenu = debugMenu
         menu.addItem(debug)
         return menu
@@ -131,6 +134,25 @@ final class LabAppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
 
     private func begin(_ action: AssistantAction) {
         session.begin(action, capture: false)
+    }
+
+    // MARK: Diff playground
+
+    @objc private func showDiffDemo() {
+        if diffDemoWindow == nil {
+            let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 900, height: 700),
+                                  styleMask: [.titled, .closable, .miniaturizable, .resizable],
+                                  backing: .buffered, defer: false)
+            AssistantWindowPresentation.configure(window)
+            window.title = "Lab · Text Diff"
+            window.minSize = NSSize(width: 780, height: 640)
+            window.isReleasedWhenClosed = false
+            window.delegate = self
+            window.contentView = NSHostingView(rootView: DiffDemoView())
+            window.center()
+            diffDemoWindow = window
+        }
+        if let diffDemoWindow { AssistantWindowPresentation.restore(diffDemoWindow) }
     }
 
     // MARK: Inspector
