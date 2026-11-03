@@ -8,7 +8,8 @@ struct DiffDemoView: View {
     @State private var proposed = DiffDemoExample.examples[0].proposed
     @State private var exampleIndex = 0
     @State private var granularity: TextDiff.Granularity = .words
-    @State private var presentation: Presentation = .inline
+    @State private var presentation: Presentation = .layered
+    @State private var selectedChange: Int?
     @State private var showWhitespace = false
     @State private var result: TextDiffResult?
     @State private var comparedOriginal = ""
@@ -19,7 +20,7 @@ struct DiffDemoView: View {
     @State private var comparisonTask: Task<Void, Never>?
 
     private enum Presentation: String, CaseIterable {
-        case inline = "Inline", split = "Side by side", clean = "Final text"
+        case layered = "Full diff", inline = "Classic", split = "Side by side", clean = "Final text", review = "Review"
     }
 
     private var isStale: Bool {
@@ -57,7 +58,7 @@ struct DiffDemoView: View {
                 Picker("Compare by", selection: $granularity) {
                     Text("Words").tag(TextDiff.Granularity.words)
                     Text("Characters").tag(TextDiff.Granularity.characters)
-                }.pickerStyle(.segmented).frame(width: 190)
+                }.pickerStyle(.segmented).labelsHidden().frame(width: 190)
                 Button { compare() } label: { Image(systemName: "play.fill") }
                     .help("Compare texts").accessibilityLabel("Compare texts")
                     .accessibilityIdentifier("diff_compare")
@@ -70,9 +71,10 @@ struct DiffDemoView: View {
             HStack {
                 Picker("View", selection: $presentation) {
                     ForEach(Presentation.allCases, id: \.self) { Text($0.rawValue).tag($0) }
-                }.pickerStyle(.segmented).frame(width: 310)
+                }.pickerStyle(.segmented).labelsHidden().frame(width: 430)
                 Spacer()
                 Toggle("Show whitespace", isOn: $showWhitespace).toggleStyle(.checkbox)
+                    .disabled(presentation == .review || presentation == .layered)
                 Button {
                     NSPasteboard.general.clearContents()
                     NSPasteboard.general.setString(comparedProposed, forType: .string)
@@ -84,8 +86,14 @@ struct DiffDemoView: View {
                 Text(failure).font(.callout).foregroundStyle(.red)
             }
             HStack(spacing: 18) {
-                Label("Added · underline", systemImage: "plus.circle.fill").foregroundStyle(.green)
-                Label("Removed · strikethrough", systemImage: "minus.circle.fill").foregroundStyle(.red)
+                if presentation == .layered {
+                    Text("Read the revised sentence below · Removed text sits above.").foregroundStyle(.secondary)
+                } else if presentation == .review {
+                    Text("Click a marked phrase to inspect the change.").foregroundStyle(.secondary)
+                } else {
+                    Label("Added", systemImage: "plus.circle.fill").foregroundStyle(.green)
+                    Label("Removed", systemImage: "minus.circle.fill").foregroundStyle(.red)
+                }
                 Spacer()
                 if isComparing {
                     ProgressView().controlSize(.small)
@@ -99,7 +107,15 @@ struct DiffDemoView: View {
                 }
             }.font(.caption)
             if let result {
-                if presentation == .split {
+                if presentation == .layered {
+                    DiffDemoLayeredView(parts: result.parts)
+                        .background(Color(nsColor: .textBackgroundColor))
+                        .clipShape(RoundedRectangle(cornerRadius: 8))
+                        .overlay(RoundedRectangle(cornerRadius: 8).stroke(Color.primary.opacity(0.12)))
+                        .frame(maxWidth: .infinity, maxHeight: .infinity)
+                } else if presentation == .review {
+                    review(result.parts)
+                } else if presentation == .split {
                     HStack(spacing: 14) {
                         output(result.parts, keeping: .removed, identifier: "diff_output_original")
                         output(result.parts, keeping: .inserted, identifier: "diff_output_revised")
@@ -142,6 +158,62 @@ struct DiffDemoView: View {
             .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 
+    private func review(_ parts: [DiffPart]) -> some View {
+        let changes = DiffDemoChange.groups(parts)
+        return VStack(alignment: .leading, spacing: 10) {
+            DiffDemoRichText(text: DiffDemoReview.text(parts, selectedID: selectedChange),
+                             identifier: "diff_review", onChangeClick: { selectedChange = $0 })
+                .background(Color(nsColor: .textBackgroundColor))
+                .clipShape(RoundedRectangle(cornerRadius: 8))
+                .overlay(RoundedRectangle(cornerRadius: 8).stroke(Color.primary.opacity(0.12)))
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+            if !changes.isEmpty {
+                ScrollView(.horizontal) {
+                    HStack(spacing: 6) {
+                        ForEach(changes) { change in
+                            Button { selectedChange = change.id } label: {
+                                HStack(spacing: 4) {
+                                    Text("\(change.id + 1)")
+                                    if change.after.isEmpty { Image(systemName: "minus") }
+                                }
+                            }
+                            .buttonStyle(.bordered)
+                            .tint(change.id == selectedChange ? .teal : .gray)
+                            .help(change.after.isEmpty ? "Inspect deletion" : "Inspect change")
+                            .accessibilityLabel("Change \(change.id + 1)")
+                            .accessibilityIdentifier("diff_change_\(change.id)")
+                        }
+                    }
+                }.fixedSize(horizontal: false, vertical: true)
+            }
+            if let change = changes.first(where: { $0.id == selectedChange }) {
+                HStack(alignment: .top, spacing: 14) {
+                    changeText("Before", text: change.before, tint: .red)
+                    Image(systemName: "arrow.right").foregroundStyle(.secondary).padding(.top, 22)
+                    changeText("After", text: change.after, tint: .teal)
+                }
+                .padding(12)
+                .background(Color(nsColor: .controlBackgroundColor), in: RoundedRectangle(cornerRadius: 8))
+                .accessibilityIdentifier("diff_change_detail")
+            } else if !changes.isEmpty {
+                Text("\(changes.count) changes · Click a highlight or a number. Deletions use the − number.")
+                    .font(.caption).foregroundStyle(.secondary)
+            }
+        }
+    }
+
+    private func changeText(_ title: String, text: String, tint: Color) -> some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text(title).font(.caption).foregroundStyle(.secondary)
+            ScrollView {
+                Text(verbatim: text.isEmpty ? "(empty)" : text)
+                    .font(.system(size: 15)).foregroundStyle(tint)
+                    .textSelection(.enabled)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            }.frame(maxHeight: 80)
+        }.frame(maxWidth: .infinity, alignment: .leading)
+    }
+
     private func compare() {
         guard !isComparing else { return }
         guard original.unicodeScalars.count <= 16_000, proposed.unicodeScalars.count <= 16_000 else {
@@ -158,6 +230,7 @@ struct DiffDemoView: View {
             isComparing = false
             guard !Task.isCancelled else { return }
             comparedOriginal = old; comparedProposed = new; comparedGranularity = mode
+            selectedChange = nil
             result = comparison
         }
     }
@@ -207,6 +280,7 @@ enum DiffDemoFormatting {
 private struct DiffDemoRichText: NSViewRepresentable {
     let text: NSAttributedString
     let identifier: String
+    var onChangeClick: ((Int) -> Void)?
 
     func makeNSView(context: Context) -> WrappingScrollView {
         let scroll = WrappingScrollView()
@@ -214,7 +288,7 @@ private struct DiffDemoRichText: NSViewRepresentable {
         scroll.hasHorizontalScroller = false
         scroll.autohidesScrollers = true
         scroll.drawsBackground = false
-        let view = NSTextView(frame: NSRect(x: 0, y: 0, width: 400, height: 200))
+        let view = DiffDemoTextView(frame: NSRect(x: 0, y: 0, width: 400, height: 200))
         view.isEditable = false
         view.isSelectable = true
         view.isRichText = true
@@ -234,12 +308,35 @@ private struct DiffDemoRichText: NSViewRepresentable {
     }
 
     func updateNSView(_ scroll: WrappingScrollView, context: Context) {
-        guard let view = scroll.documentView as? NSTextView else { return }
+        guard let view = scroll.documentView as? DiffDemoTextView else { return }
+        view.onChangeClick = onChangeClick
         view.setAccessibilityIdentifier(identifier)
         view.setAccessibilityLabel("Rich-text diff result")
         if let storage = view.textStorage, !storage.isEqual(to: text) {
             storage.setAttributedString(text)
         }
+    }
+}
+
+private final class DiffDemoTextView: NSTextView {
+    var onChangeClick: ((Int) -> Void)?
+
+    override func mouseDown(with event: NSEvent) {
+        let point = convert(event.locationInWindow, from: nil)
+        if let layout = layoutManager, let container = textContainer, let storage = textStorage {
+            let local = NSPoint(x: point.x - textContainerOrigin.x, y: point.y - textContainerOrigin.y)
+            var fraction: CGFloat = 0
+            let glyph = layout.glyphIndex(for: local, in: container, fractionOfDistanceThroughGlyph: &fraction)
+            if glyph < layout.numberOfGlyphs {
+                let bounds = layout.boundingRect(forGlyphRange: NSRange(location: glyph, length: 1), in: container)
+                let index = layout.characterIndexForGlyph(at: glyph)
+                if bounds.contains(local), index < storage.length,
+                   let id = storage.attribute(DiffDemoReview.changeID, at: index, effectiveRange: nil) as? Int {
+                    onChangeClick?(id)
+                }
+            }
+        }
+        super.mouseDown(with: event)
     }
 }
 

@@ -100,12 +100,15 @@ final class WritingMarkdownPayloadTests: XCTestCase {
         XCTAssertEqual(result.candidates.count, 2)
     }
 
-    func testWritingPromptRequestsTwoAnswersAndFreeFormMetadata() throws {
+    func testWritingPromptRequestsScoreAndOptionalSecondAnswer() throws {
         let prompt = try CloudAPIContract.prompt(action: .writeEnglish, additionalInstructions: "")
-        XCTAssertTrue(prompt.contains("exactly two faithful English versions"))
-        XCTAssertTrue(prompt.contains("## General, ## Direction, ## Alternative, ## Notes, ## Summary"))
+        XCTAssertTrue(prompt.contains("one faithful English general version"))
+        XCTAssertTrue(prompt.contains("Start with ## Score containing only the integer"))
+        XCTAssertTrue(prompt.contains("## Direction, ## Alternative and ## Alternative Notes"))
+        XCTAssertTrue(prompt.contains("A score below 10 does not require an alternative"))
+        XCTAssertTrue(prompt.contains("For a score of 10, return the original input unchanged"))
         XCTAssertTrue(prompt.contains("Choose the label freely, not from a fixed list"))
-        XCTAssertTrue(prompt.contains("exactly two Chinese bullet items"))
+        XCTAssertTrue(prompt.contains("Finish the first answer AND its own explanation"))
         XCTAssertFalse(prompt.contains("## Conversational"))
         XCTAssertFalse(prompt.contains("## Academic"))
     }
@@ -116,28 +119,22 @@ final class WritingMarkdownPayloadTests: XCTestCase {
         let body = try XCTUnwrap(JSONSerialization.jsonObject(with: XCTUnwrap(request.httpBody)) as? [String: Any])
         let messages = try XCTUnwrap(body["messages"] as? [[String: String]])
         let prompt = try XCTUnwrap(messages.first?["content"])
-        XCTAssertTrue(prompt.contains("BOTH answer bodies is always English"))
+        XCTAssertTrue(prompt.contains("all returned answer bodies is always English"))
         XCTAssertTrue(prompt.contains("never merely polish it in the source language"))
         XCTAssertTrue(prompt.contains("only if the input is already correct English"))
-        XCTAssertTrue(prompt.contains("Direction, Notes and Summary remain in Chinese"))
-        XCTAssertTrue(prompt.contains("General and Alternative MUST contain English answers"))
+        XCTAssertTrue(prompt.contains("Direction and each version's explanation remain in Chinese"))
+        XCTAssertTrue(prompt.contains("General and any returned Alternative MUST contain English answers"))
         XCTAssertTrue(prompt.contains("不能只润色原文"))
         XCTAssertEqual(messages.last?["content"], "我是周凯你好")
     }
 
-    func testWritingPromptRequestsSelectiveEditEmphasis() throws {
+    func testWritingPromptDelegatesDiffToClientNotModel() throws {
         let prompt = try CloudAPIContract.prompt(action: .writeEnglish, additionalInstructions: "")
-        XCTAssertTrue(prompt.contains("use **bold** only for corrections of errors such as grammar, spelling, tense or prepositions"))
-        XCTAssertTrue(prompt.contains("use *italics* only for expression improvements where the original wording is valid"))
-        XCTAssertTrue(prompt.contains("use bold only, not combined bold and italics"))
-        XCTAssertTrue(prompt.contains("Do not label stylistic preferences or translation choices as errors"))
-        XCTAssertTrue(prompt.contains("relative to the original input"))
-        XCTAssertTrue(prompt.contains("Leave unchanged wording unmarked"))
-        XCTAssertTrue(prompt.contains("never the entire answer"))
-        XCTAssertTrue(prompt.contains("never insert them inside protected code"))
-        XCTAssertTrue(prompt.contains("input 'Please helps me fix this bug.'"))
-        XCTAssertTrue(prompt.contains("General: 'Please **help** me fix this bug.'"))
-        XCTAssertTrue(prompt.contains("Alternative: 'Please **help** me *resolve this issue*.'"))
-        XCTAssertTrue(prompt.contains("always use the selected target language for actual answers"))
+        XCTAssertTrue(prompt.contains("answer as plain text"))
+        XCTAssertTrue(prompt.contains("client computes all differences"))
+        XCTAssertTrue(prompt.contains("Do not add bold, italics, diff markers"))
+        XCTAssertTrue(prompt.contains("No separate overall Notes or Summary section"))
+        XCTAssertFalse(prompt.contains("use **bold** only"))
+        XCTAssertFalse(prompt.contains("illustrating emphasis"))
     }
 }

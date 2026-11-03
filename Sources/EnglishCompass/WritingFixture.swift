@@ -4,7 +4,22 @@ import AssistantCore
 enum WritingFixture {
     static let result = ModelResult(
         candidates: ["Please help me fix this bug.", "Please help me resolve this issue."],
-        summary: "## Notes\n- Please 后使用动词原形 help，而不是 helps。\n- 第二版调整措辞，保持原有请求和语气。",
-        markdownCandidates: ["Please **help** me fix this bug.", "Please **help** me *resolve this issue*."],
-        revisionDirection: "调整措辞")
+        explanations: ["- **help**：Please 后使用动词原形，而不是 helps。",
+                       "- **resolve this issue**：调整措辞，保持原有请求和语气。"],
+        revisionDirection: "调整措辞", usesPlainTextAnswers: true, originalScore: 8)
+
+    static let content = """
+    ## Score
+    8
+    ## General
+    Please help me fix this bug.
+    ## General Notes
+    - **help**：Please 后使用动词原形，而不是 helps。
+    ## Direction
+    调整措辞
+    ## Alternative
+    Please help me resolve this issue.
+    ## Alternative Notes
+    - **resolve this issue**：调整措辞，保持原有请求和语气。
+    """
 }

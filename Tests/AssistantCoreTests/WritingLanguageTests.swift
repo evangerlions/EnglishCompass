@@ -11,7 +11,7 @@ final class WritingLanguageTests: XCTestCase {
             XCTAssertTrue(prompt.contains("MUST contain \(language.name) answers"))
             XCTAssertTrue(prompt.contains(language.example))
             XCTAssertFalse(prompt.contains("{targetLanguage}"))
-            XCTAssertTrue(prompt.contains("English example illustrating emphasis only (always use the selected target language for actual answers)"))
+            XCTAssertTrue(prompt.contains("client computes all differences"))
             for stream in [false, true] {
                 let request = try CloudAPIContract.request(text: "你好", action: .writeEnglish,
                     additionalInstructions: "", key: "synthetic", stream: stream, targetLanguage: language)

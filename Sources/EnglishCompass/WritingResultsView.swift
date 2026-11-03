@@ -19,6 +19,10 @@ struct WritingResultsView: View {
             ScrollViewReader { proxy in
                 ScrollView {
                     VStack(alignment: .leading, spacing: 10) {
+                        if let score = session.result?.originalScore ?? (session.isStreaming ? session.liveWriteSections.originalScore : nil),
+                           (0...10).contains(score) {
+                            OriginalWritingScoreView(score: score, accent: accent)
+                        }
                         if let result = session.result {
                             ForEach(result.candidates.indices, id: \.self) { index in
                                 card(result, index: index).id(index)
@@ -84,6 +88,16 @@ struct WritingResultsView: View {
         if session.candidateIndex == previous { scrollSelectionIntoView = false }
     }
 
+    private func handleNativeNavigation(_ key: UInt16) -> Bool {
+        switch key {
+        case 126: moveSelection(-1); return true
+        case 125: moveSelection(1); return true
+        case 36, 76: session.copy(); return true
+        case 49: session.speakCurrent(); return true
+        default: return false
+        }
+    }
+
     // MARK: Streaming
 
     /// Only cards that have started are shown. The card currently streaming is
@@ -93,9 +107,9 @@ struct WritingResultsView: View {
     private var streamingCards: some View {
         let live = session.liveWriteSections
         ForEach(live.cards.indices, id: \.self) { index in
-            if let markdown = live.cards[index] {
-                streamingCard(index: index, markdown: markdown,
-                              isCurrent: live.current == index)
+            if let body = live.cards[index] {
+                streamingCard(index: index, markdown: body, isCurrent: !live.finished[index])
+                    .id(index)
             }
         }
         if let notes = live.notes { streamingBlock(title: "讲解", markdown: notes) }
@@ -105,10 +119,10 @@ struct WritingResultsView: View {
     private func streamingCard(index: Int, markdown: String, isCurrent: Bool) -> some View {
         let selected = session.candidateIndex == index
         let finished = !isCurrent
-        let plain = plainCopy(markdown)
+        let plain = session.liveWriteSections.plainAnswer(at: index) ?? plainCopy(markdown)
         return VStack(alignment: .leading, spacing: 8) {
             HStack(spacing: 8) {
-                Text(index == 0 ? "通用" : (session.liveWriteSections.direction ?? "推荐表达"))
+                Text(index == 0 ? "回复 1 · 通用" : "回复 2 · \(session.liveWriteSections.direction ?? "推荐表达")")
                     .font(.system(size: 11.5, weight: .bold)).tracking(0.6)
                     .foregroundStyle(selected ? accent : Color.secondary)
                 if selected {
@@ -128,14 +142,20 @@ struct WritingResultsView: View {
                 // Copy available as soon as there is any text, even mid-stream.
                 streamingCopyButton(index: index, plain: plain, selected: selected)
             }
-            Text(inlineMarkdown(markdown))
-                .font(.system(size: 15))
-                .foregroundStyle(Color.primary.opacity(0.9))
-                .lineSpacing(2)
-                .multilineTextAlignment(session.requestLanguage.isRightToLeft ? .trailing : .leading)
-                .frame(maxWidth: .infinity, alignment: session.requestLanguage.isRightToLeft ? .trailing : .leading)
-                .fixedSize(horizontal: false, vertical: true)
-                .textSelection(.enabled)
+            if finished {
+                WritingDiffBody(original: session.input, revised: plain, navigation: handleNativeNavigation)
+            } else {
+                // While the model is still appending, do not mislabel its
+                // missing suffix as a deletion. Switch to diff at body end.
+                Text(session.liveWriteSections.usesPlainTextAnswers ? AttributedString(plain) : inlineMarkdown(markdown))
+                    .font(.system(size: 15)).textSelection(.enabled)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            }
+            if let notes = session.liveWriteSections.explanations[index] {
+                Divider().padding(.vertical, 4)
+                MarkdownBody(source: notes).foregroundStyle(.secondary)
+                    .accessibilityIdentifier("answer_explanation_\(index)")
+            }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(.horizontal, 16).padding(.vertical, 14)
@@ -192,14 +212,12 @@ struct WritingResultsView: View {
                     .accessibilityIdentifier("speak_answer_\(index)")
                 copyButton(index: index, selected: selected, copied: copied)
             }
-            answerText(result, index: index)
-                .font(.system(size: 15))
-                .foregroundStyle(selected ? Color.primary : Color.primary.opacity(0.72))
-                .lineSpacing(2)
-                .multilineTextAlignment(session.requestLanguage.isRightToLeft ? .trailing : .leading)
-                .frame(maxWidth: .infinity, alignment: session.requestLanguage.isRightToLeft ? .trailing : .leading)
-                .fixedSize(horizontal: false, vertical: true)
-                .textSelection(.enabled)
+            WritingDiffBody(original: session.input, revised: result.candidates[index], navigation: handleNativeNavigation)
+            if result.explanations.indices.contains(index), !result.explanations[index].isEmpty {
+                Divider().padding(.vertical, 4)
+                MarkdownBody(source: result.explanations[index]).foregroundStyle(.secondary)
+                    .accessibilityIdentifier("answer_explanation_\(index)")
+            }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(.horizontal, 16).padding(.vertical, 14)
@@ -289,30 +307,41 @@ struct WritingResultsView: View {
     }
 
     private func label(for result: ModelResult, index: Int) -> String {
-        if result.candidates.count == 1 { return "回答" }
-        return index == 0 ? "通用" : (result.revisionDirection ?? "推荐表达")
+        if result.usesPlainTextAnswers != true, result.candidates.count == 1 { return "回答" }
+        return index == 0 ? "回复 1 · 通用" : "回复 2 · \(result.revisionDirection ?? "推荐表达")"
     }
 
-    private func answerText(_ result: ModelResult, index: Int) -> Text {
-        if result.markdownCandidates.indices.contains(index),
-           let rich = try? AttributedString(markdown: result.markdownCandidates[index],
-                                            options: .init(interpretedSyntax: .inlineOnlyPreservingWhitespace)) {
-            return Text(rich)
+}
+
+/// Read-only model assessment, outside answer selection/copy and included in content sizing.
+struct OriginalWritingScoreView: View {
+    let score: Int
+    let accent: Color
+
+    static func symbols(for score: Int) -> [String] {
+        guard (0...10).contains(score) else { return [] }
+        return (0..<5).map { index in
+            let remaining = score - index * 2
+            return remaining >= 2 ? "star.fill" : (remaining == 1 ? "star.leadinghalf.filled" : "star")
         }
-        let terms = result.highlights.indices.contains(index) ? result.highlights[index] : []
-        return Text(emphasized(result.candidates[index], terms: terms))
     }
 
-    private func emphasized(_ text: String, terms: [String]) -> AttributedString {
-        var result = AttributedString(text)
-        // Exact ranges only: no Markdown interpretation or mutation of the source answer.
-        for term in terms where !term.isEmpty {
-            var start = result.startIndex
-            while start < result.endIndex, let range = result[start...].range(of: term) {
-                result[range].inlinePresentationIntent = .stronglyEmphasized
-                start = range.upperBound
+    var body: some View {
+        HStack(spacing: 8) {
+            Text("原文评分").foregroundStyle(.secondary)
+            HStack(spacing: 3) {
+                ForEach(Array(Self.symbols(for: score).enumerated()), id: \.offset) { _, symbol in
+                    Image(systemName: symbol).foregroundStyle(accent)
+                }
             }
+            Text("\(score)/10").monospacedDigit().foregroundStyle(.secondary)
+            Spacer(minLength: 0)
         }
-        return result
+        .font(.system(size: 11.5))
+        .padding(.horizontal, 4)
+        .help("AI 对原文的评分，仅供参考；一颗星 2 分，半颗星 1 分。")
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel("AI 原文评分 \(score) 分，满分 10 分")
+        .accessibilityIdentifier("original_writing_score")
     }
 }

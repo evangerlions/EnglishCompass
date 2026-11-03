@@ -21,10 +21,15 @@ final class LabAppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     private var keyAvailable = false
     private var inspectorWindow: NSWindow?
     private var diffDemoWindow: NSWindow?
+    private let diffDemoOnly = ProcessInfo.processInfo.arguments.contains("--diff-demo")
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         NSApp.setActivationPolicy(.regular)
         NSApp.mainMenu = makeMenu()
+        if diffDemoOnly {
+            showDiffDemo()
+            return
+        }
         let defaults = UserDefaults(suiteName: Self.defaultsSuite) ?? .standard
         preferences = Preferences(defaults: defaults)
         let key = Self.environmentKey()
@@ -64,18 +69,19 @@ final class LabAppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         panel = window
         NSApp.activate(ignoringOtherApps: true)
         window.makeKeyAndOrderFront(nil)
-        if ProcessInfo.processInfo.arguments.contains("--diff-demo") { showDiffDemo() }
         print(key == nil
               ? "event=lab_started key=missing hint=export \(Self.keyVariable) in ~/.zshrc and relaunch from a new Terminal"
               : "event=lab_started key=environment")
     }
 
     func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
-        if let panel { AssistantWindowPresentation.restore(panel) }
+        if diffDemoOnly { showDiffDemo() }
+        else if let panel { AssistantWindowPresentation.restore(panel) }
         return false
     }
 
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {
+        if diffDemoOnly { return true }
         // Closing the inspector alone must not quit; only the panel close counts.
         if NSApp.windows.contains(where: { $0 === panel }) { return false }
         return true
@@ -98,11 +104,13 @@ final class LabAppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
 
         let file = NSMenuItem()
         let fileMenu = NSMenu(title: "File")
-        fileMenu.addItem(item(title: "Write / Translate", key: "1", action: #selector(chooseWrite)))
-        fileMenu.addItem(item(title: "Understand English", key: "2", action: #selector(chooseUnderstand)))
-        fileMenu.addItem(.separator())
-        fileMenu.addItem(item(title: "Run", key: "\r", action: #selector(run)))
-        fileMenu.addItem(.separator())
+        if !diffDemoOnly {
+            fileMenu.addItem(item(title: "Write / Translate", key: "1", action: #selector(chooseWrite)))
+            fileMenu.addItem(item(title: "Understand English", key: "2", action: #selector(chooseUnderstand)))
+            fileMenu.addItem(.separator())
+            fileMenu.addItem(item(title: "Run", key: "\r", action: #selector(run)))
+            fileMenu.addItem(.separator())
+        }
         fileMenu.addItem(ApplicationMenus.closeWindowItem())
         file.submenu = fileMenu
         menu.addItem(file)
@@ -113,7 +121,9 @@ final class LabAppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
 
         let debug = NSMenuItem()
         let debugMenu = NSMenu(title: "Debug")
-        debugMenu.addItem(item(title: "Inspector", key: "i", modifiers: [.command, .option], action: #selector(showInspector)))
+        if !diffDemoOnly {
+            debugMenu.addItem(item(title: "Inspector", key: "i", modifiers: [.command, .option], action: #selector(showInspector)))
+        }
         debugMenu.addItem(item(title: "Diff Demo", key: "d", modifiers: [.command, .option], action: #selector(showDiffDemo)))
         debug.submenu = debugMenu
         menu.addItem(debug)

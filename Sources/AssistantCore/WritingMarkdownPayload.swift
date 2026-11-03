@@ -1,16 +1,27 @@
 import Foundation
 
-/// Tolerant parser for the writing response.
-///
-/// Two answers and a separate card-title direction are structurally required.
-/// Only the answer bodies are copied or used for replacement. Everything else (## Notes, ## Summary
-/// or any trailing prose) is treated as one Markdown body and shown as-is; it
-/// is never used for copy, so its exact shape does not matter. This keeps a
-/// response valid even when the provider reorders, merges or truncates the
-/// explanatory sections.
+/// Fixed section boundaries only; explanations never enter copyable answers.
 public enum WritingMarkdownPayload {
     public static let answerHeadings = ["General", "Alternative"]
+    public static let explanationHeadings = ["General Notes", "Alternative Notes"]
     public static let directionHeading = "Direction"
+    public static let groupedHeadings = ["General", "General Notes", "Direction", "Alternative", "Alternative Notes"]
+    public static let scoreHeading = "Score"
+    public static let scoredHeadings = [scoreHeading] + groupedHeadings
+    public static let legacyHeadings = ["General", "Direction", "Alternative", "Notes", "Summary"]
+
+    public static func usesGroupedFormat(_ content: String) -> Bool {
+        content.components(separatedBy: "\n").contains {
+            heading($0, candidates: explanationHeadings + [scoreHeading]) != nil
+        }
+    }
+
+    /// Only complete ASCII integer scores are accepted; never round or clamp.
+    public static func score(_ source: String) -> Int? {
+        let text = source.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard text == "10" || (text.count == 1 && text.utf8.allSatisfy({ (48...57).contains($0) })) else { return nil }
+        return Int(text)
+    }
 
     static func parse(_ content: String) throws -> ModelResult {
         let normalized = content.replacingOccurrences(of: "\r\n", with: "\n")
@@ -18,85 +29,74 @@ public enum WritingMarkdownPayload {
               !normalized.contains("<think"), !normalized.contains("</think>") else {
             throw AssistantFailure.invalidResult
         }
-
-        // Split into sections by our fixed headings only.
-        var answerBodies: [String: String] = [:]
-        var bodySections: [(heading: String, text: String)] = []
-        var direction: String?
+        let grouped = usesGroupedFormat(normalized)
+        let known = scoredHeadings + bodyHeadings
+        var bodies: [String: String] = [:]
         var current: String?
         var lines: [String] = []
-
         func commit() {
-            guard let heading = current else { return }
-            let body = lines.joined(separator: "\n").trimmingCharacters(in: .whitespacesAndNewlines)
-            if answerHeadings.contains(heading) {
-                answerBodies[heading] = body
-            } else if heading == directionHeading {
-                direction = body
-            } else if !body.isEmpty {
-                bodySections.append((heading, body))
-            }
+            guard let current else { return }
+            bodies[current] = lines.joined(separator: "\n").trimmingCharacters(in: .whitespacesAndNewlines)
             lines.removeAll(keepingCapacity: true)
         }
-
         for line in normalized.components(separatedBy: "\n") {
-            if let heading = answerHeading(line) {
+            if let next = heading(line, candidates: known) {
                 commit()
-                guard answerBodies[heading] == nil else { throw AssistantFailure.invalidResult }
-                current = heading
-            } else if let heading = otherHeading(line) {
-                commit()
-                if heading == directionHeading, direction != nil { throw AssistantFailure.invalidResult }
-                current = heading
+                guard bodies[next] == nil else { throw AssistantFailure.invalidResult }
+                current = next
             } else if current != nil {
                 lines.append(line)
             } else if !line.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                // Content before the first heading is not part of any card/body.
                 throw AssistantFailure.invalidResult
             }
         }
         commit()
-
-        guard let direction, let label = directionLabel(direction) else { throw AssistantFailure.invalidResult }
-
-        // Metadata is never part of the copy-bound answers.
-        let markdown = try answerHeadings.map { heading -> String in
-            guard let body = answerBodies[heading] else { throw AssistantFailure.invalidResult }
-            let plain = plainText(body)
-            guard !plain.isEmpty else { throw AssistantFailure.invalidResult }
-            return body
+        let originalScore: Int?
+        if let rawScore = bodies[scoreHeading] {
+            guard let value = score(rawScore) else { throw AssistantFailure.invalidResult }
+            originalScore = value
+        } else { originalScore = nil }
+        guard let general = bodies[answerHeadings[0]], !general.isEmpty else {
+            throw AssistantFailure.invalidResult
         }
-        let candidates = markdown.map { plainText($0) }
-
-        // Everything explanatory becomes one Markdown body, headings preserved.
-        let body = bodySections
-            .map { "## \($0.heading)\n\($0.text)" }
-            .joined(separator: "\n\n")
-            .trimmingCharacters(in: .whitespacesAndNewlines)
-
-        return try ModelResult(candidates: candidates, explanations: [],
-                               summary: body, highlights: [],
-                               markdownCandidates: markdown, revisionDirection: label).validated()
+        var answers = [general]
+        var label: String?
+        if let alternative = bodies[answerHeadings[1]] {
+            guard !alternative.isEmpty,
+                  let direction = bodies[directionHeading], let validLabel = directionLabel(direction) else {
+                throw AssistantFailure.invalidResult
+            }
+            answers.append(alternative)
+            label = validLabel
+        } else {
+            // Only the grouped protocol permits omission of the entire second group.
+            guard grouped, bodies[directionHeading] == nil, bodies[explanationHeadings[1]] == nil else {
+                throw AssistantFailure.invalidResult
+            }
+        }
+        let legacyBody = bodyHeadings.compactMap { name in
+            bodies[name].flatMap { $0.isEmpty ? nil : "## \(name)\n\($0)" }
+        }.joined(separator: "\n\n")
+        if grouped {
+            // Keep an explanation slot for every answer that was actually returned.
+            // A score never overrides the model's answer or optional-group decision.
+            return try ModelResult(candidates: answers,
+                explanations: answers.indices.map { bodies[explanationHeadings[$0]] ?? "" },
+                summary: legacyBody,
+                revisionDirection: label, usesPlainTextAnswers: true, originalScore: originalScore).validated()
+        }
+        let candidates = answers.map(plainText)
+        return try ModelResult(candidates: candidates, summary: legacyBody,
+                               markdownCandidates: answers, revisionDirection: label).validated()
     }
 
-    /// True when the content uses one of our fixed level-2 headings, even if
-    /// malformed. Such content must never fall back to being one plain answer.
     static func looksSectioned(_ content: String) -> Bool {
-        content.replacingOccurrences(of: "\r\n", with: "\n")
-            .components(separatedBy: "\n").contains { answerHeading($0) != nil || otherHeading($0) != nil }
+        content.components(separatedBy: "\n").contains {
+            heading($0, candidates: scoredHeadings + bodyHeadings) != nil
+        }
     }
 
-    static func answerHeading(_ line: String) -> String? {
-        heading(line, candidates: answerHeadings)
-    }
-
-    /// Section boundaries are ONLY our fixed names. Any other heading (for
-    /// example a `### Background` the user wrote and the model translated) is
-    /// ordinary content of the current section, never a new section.
-    private static func otherHeading(_ line: String) -> String? {
-        heading(line, candidates: [directionHeading] + bodyHeadings)
-    }
-
+    static func answerHeading(_ line: String) -> String? { heading(line, candidates: answerHeadings) }
     static let bodyHeadings = ["Notes", "Summary"]
 
     static func heading(_ line: String, candidates: [String]) -> String? {
@@ -106,7 +106,6 @@ public enum WritingMarkdownPayload {
         return candidates.first { $0.caseInsensitiveCompare(title) == .orderedSame }
     }
 
-    /// A short, free-form Chinese label chosen by the model, never an answer.
     public static func directionLabel(_ source: String) -> String? {
         let label = plainText(source)
         guard !label.isEmpty, label.count <= 40,
@@ -115,16 +114,14 @@ public enum WritingMarkdownPayload {
         return label
     }
 
-    /// Strips inline markup (`**`, `` ` ``, links) for copy and replacement while
-    /// keeping line breaks, blank lines and list markers exactly as written.
+    /// Legacy Markdown conversion; new grouped answer bodies remain literal.
     public static func plainText(_ markdown: String) -> String {
         do {
             let attributed = try AttributedString(markdown: markdown,
                                                   options: .init(interpretedSyntax: .inlineOnlyPreservingWhitespace))
             return String(attributed.characters).trimmingCharacters(in: .whitespacesAndNewlines)
         } catch {
-            return markdown
-                .replacingOccurrences(of: "**", with: "")
+            return markdown.replacingOccurrences(of: "**", with: "")
                 .replacingOccurrences(of: "__", with: "")
                 .replacingOccurrences(of: "`", with: "")
                 .trimmingCharacters(in: .whitespacesAndNewlines)

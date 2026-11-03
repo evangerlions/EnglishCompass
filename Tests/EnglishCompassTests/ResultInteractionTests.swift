@@ -21,6 +21,132 @@ import AssistantCore
 
 final class ResultInteractionTests: XCTestCase {
     private var suites: [String] = []
+    func testStarsUseFiveSymbolsWithOnePointHalfSteps() {
+        for score in 0...10 {
+            let symbols = OriginalWritingScoreView.symbols(for: score)
+            XCTAssertEqual(symbols.count, 5)
+            XCTAssertEqual(symbols.filter { $0 == "star.fill" }.count, score / 2)
+            XCTAssertEqual(symbols.filter { $0 == "star.leadinghalf.filled" }.count, score % 2)
+            XCTAssertEqual(symbols.filter { $0 == "star" }.count, 5 - (score + 1) / 2)
+        }
+        XCTAssertTrue(OriginalWritingScoreView.symbols(for: -1).isEmpty)
+        XCTAssertTrue(OriginalWritingScoreView.symbols(for: 11).isEmpty)
+    }
+
+    @MainActor func testScoredSingleReplyStreamsCopiesAndNavigatesOnlyItsBody() {
+        let session = makeSession()
+        session.phase = .result
+        session.usesGroupedWriteProtocol = true
+        session.streamingMarkdown = "## Score\n10\n"
+        session.refreshStreamingSelection()
+        XCTAssertEqual(session.liveWriteSections.originalScore, 10)
+        XCTAssertNil(session.candidateIndex)
+        XCTAssertTrue(session.suggestion.isEmpty)
+        session.streamingMarkdown! += "## General\nKeep **literal** text.\n## General Notes\n无需修改。"
+        session.refreshStreamingSelection()
+        for offset in [-1, 1, 1] { session.moveCandidate(offset) }
+        XCTAssertEqual(session.candidateIndex, 0)
+        XCTAssertEqual(session.suggestion, "Keep **literal** text.")
+        XCTAssertEqual(session.liveWriteSections.finished, [true, false])
+        XCTAssertNil(session.liveWriteSections.cards[1])
+        let board = NSPasteboard.withUniqueName()
+        defer { board.releaseGlobally() }
+        session.copy(to: board)
+        XCTAssertEqual(board.string(forType: .string), "Keep **literal** text.")
+    }
+
+    @MainActor func testCompletedScoreDoesNotOverrideReturnedAnswers() throws {
+        let session = makeSession()
+        session.phase = .result
+        session.input = "Original."
+        session.result = try CloudAPIContract.parseContent("## Score\n10\n## General\nChanged.\n## General Notes\n说明。\n## Direction\n更自然\n## Alternative\nAnother.\n## Alternative Notes\n说明。", action: .writeEnglish)
+        session.chooseCandidate(0)
+        XCTAssertEqual(session.suggestion, "Changed.")
+        session.moveCandidate(1)
+        XCTAssertEqual(session.candidateIndex, 1)
+        XCTAssertEqual(session.speechText, "Another.")
+        session.result = try CloudAPIContract.parseContent("## Score\n9\n## General\nOnly answer.\n## General Notes\n说明。", action: .writeEnglish)
+        session.chooseCandidate(0)
+        session.moveCandidate(1)
+        XCTAssertEqual(session.candidateIndex, 0)
+        XCTAssertEqual(session.suggestion, "Only answer.")
+    }
+
+    func testScoredFallbackKeepsMetadataOutOfCopyableText() {
+        let scoreOnly = BestEffortResult.make(content: "## Score\n10", action: .writeEnglish, plainWriteBodies: true)
+        XCTAssertTrue(scoreOnly.candidates.isEmpty)
+        XCTAssertEqual(scoreOnly.originalScore, 10)
+        let partial = BestEffortResult.make(content: "## Score\n10\n## General\nChanged.\n## General Notes\n说明。", action: .writeEnglish, plainWriteBodies: true)
+        XCTAssertEqual(partial.candidates, ["Changed."])
+        XCTAssertEqual(partial.originalScore, 10)
+        let invalid = BestEffortResult.make(content: "## Score\n11\n## General\nChanged.", action: .writeEnglish, plainWriteBodies: true)
+        XCTAssertNil(invalid.originalScore)
+        XCTAssertEqual(invalid.candidates, ["Changed."])
+    }
+
+    @MainActor func testGroupedStreamSelectionAndNotesNeverPolluteCopy() {
+        let session = makeSession()
+        session.phase = .result
+        session.usesGroupedWriteProtocol = true
+        session.streamingMarkdown = "## General\nKeep **literal** text.\n## General Notes\n- First explanation."
+        session.refreshStreamingSelection()
+        XCTAssertEqual(session.suggestion, "Keep **literal** text.")
+        XCTAssertEqual(session.liveWriteSections.finished, [true, false])
+        XCTAssertEqual(session.liveWriteSections.explanations[0], "- First explanation.")
+        XCTAssertNil(session.liveWriteSections.cards[1])
+        session.streamingMarkdown! += "\n## Direction\n更自然\n## Alternative\nSecond answer.\n## Alternative Notes\n- Second explanation."
+        session.moveCandidate(1)
+        XCTAssertEqual(session.candidateIndex, 1)
+        XCTAssertEqual(session.suggestion, "Second answer.")
+        XCTAssertEqual(session.liveWriteSections.finished, [true, true])
+        XCTAssertEqual(session.liveWriteSections.explanations[1], "- Second explanation.")
+        let board = NSPasteboard.withUniqueName()
+        defer { board.releaseGlobally() }
+        session.copy(to: board)
+        XCTAssertEqual(board.string(forType: .string), "Second answer.")
+    }
+
+    func testGroupedFallbackKeepsExplanationPairedWithReceivedBody() {
+        let partial = "## General\nKeep **literal** text.\n## General Notes\n- 中文说明。\n## Direction\n更自然\n## Alternative\nSecond"
+        let result = BestEffortResult.make(content: partial, action: .writeEnglish, plainWriteBodies: true)
+        XCTAssertEqual(result.candidates, ["Keep **literal** text.", "Second"])
+        XCTAssertEqual(result.explanations, ["- 中文说明。", ""])
+        XCTAssertTrue(result.summary.isEmpty)
+        let early = BestEffortResult.make(content: "## General\nKeep **literal** text.", action: .writeEnglish, plainWriteBodies: true)
+        XCTAssertEqual(early.candidates, ["Keep **literal** text."])
+    }
+
+    @MainActor func testGroupedFinalResultHasSeparateExplanationAndKeyboardTargets() {
+        let session = makeSession()
+        session.input = "Please helps."
+        session.result = WritingFixture.result
+        session.phase = .result
+        session.chooseCandidate(0)
+        session.moveCandidate(1)
+        XCTAssertEqual(session.candidateIndex, 1)
+        XCTAssertEqual(session.speechText, WritingFixture.result.candidates[1])
+        XCTAssertFalse(session.suggestion.contains("调整措辞"))
+        session.moveCandidate(-1)
+        XCTAssertEqual(session.suggestion, WritingFixture.result.candidates[0])
+    }
+
+    @MainActor func testGroupedQuestionsKeepEachExplanationBesideItsAnswer() {
+        let session = makeSession()
+        session.input = "Original."
+        session.result = WritingFixture.result
+        session.phase = .result
+        session.chooseCandidate(0)
+        session.openQuestions()
+        let context = session.questions.context
+        let firstExplanation = context.range(of: WritingFixture.result.explanations[0])
+        let secondAnswer = context.range(of: "Answer 2")
+        XCTAssertNotNil(firstExplanation)
+        XCTAssertNotNil(secondAnswer)
+        if let firstExplanation, let secondAnswer {
+            XCTAssertLessThan(firstExplanation.lowerBound, secondAnswer.lowerBound)
+        }
+    }
+
     @MainActor func testGrowingResultUsesNeverInsteadOfMouseOverridableHidden() {
         let session = makeSession()
         XCTAssertEqual(session.resultScrollIndicatorVisibility, .never)
@@ -148,6 +274,36 @@ final class ResultInteractionTests: XCTestCase {
         XCTAssertEqual(session.candidateIndex, 1)
         XCTAssertEqual(session.suggestion, "Second answer.")
         XCTAssertEqual(session.liveWriteSections.direction ?? session.result?.revisionDirection, "更自然")
+    }
+
+    @MainActor func testGroupedReplyLayoutSizesBothBodiesWithoutNestedScrollers() async throws {
+        let session = makeSession()
+        session.input = "Please helps me fix this bug."
+        session.phase = .result
+        session.result = WritingFixture.result
+        session.chooseCandidate(0)
+        let hosting = NSHostingView(rootView: WritingResultsView(session: session))
+        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 540, height: 600),
+                              styleMask: [.borderless], backing: .buffered, defer: false)
+        window.isReleasedWhenClosed = false
+        defer { window.close() }
+        window.contentView = hosting
+        hosting.frame = window.contentLayoutRect
+        hosting.layoutSubtreeIfNeeded()
+        try await Task.sleep(for: .milliseconds(200))
+        hosting.layoutSubtreeIfNeeded()
+        func bodies(_ view: NSView) -> [DiffDemoLayeredDocument] {
+            (view as? DiffDemoLayeredDocument).map { [$0] } ?? view.subviews.flatMap(bodies)
+        }
+        let texts = bodies(hosting)
+        XCTAssertEqual(texts.count, 2)
+        XCTAssertEqual(Set(texts.map(\.revisedText)), Set(WritingFixture.result.candidates))
+        XCTAssertTrue(texts.allSatisfy { $0.bounds.height > 20 && !($0.superview is NSClipView) })
+        XCTAssertNotNil(session.resultMeasure)
+        if let measure = session.resultMeasure {
+            XCTAssertGreaterThan(measure.content, texts.map { $0.bounds.height }.reduce(0, +),
+                                 "Reply explanations must contribute to outer scroll content height")
+        }
     }
 
     @MainActor func testBothViewsUseSharedMarkdownAndBodyObserverIsActuallyInstalled() async throws {

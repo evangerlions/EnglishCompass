@@ -39,6 +39,9 @@ final class AssistantSession: ObservableObject {
     /// Partial Markdown while streaming; the result views render it live. Cleared
     /// when the finished payload is strictly parsed into `result`.
     @Published var streamingMarkdown: String?
+    /// New Write requests promise literal answer bodies from the first delta,
+    /// even before their first Notes heading has arrived.
+    var usesGroupedWriteProtocol = false
     func reportResultMeasure(content: CGFloat, viewport: CGFloat) {
         let measure = ResultMeasure(content: content.rounded(), viewport: viewport.rounded())
         if measure != resultMeasure { resultMeasure = measure }
@@ -100,11 +103,15 @@ final class AssistantSession: ObservableObject {
         let index = candidateIndex ?? cards.firstIndex(where: { $0 != nil })
         guard let index, cards.indices.contains(index), let markdown = cards[index] else { return }
         if candidateIndex != index { candidateIndex = index }
-        let plain = WritingMarkdownPayload.plainText(markdown)
+        let plain = liveWriteSections.plainAnswer(at: index) ?? WritingMarkdownPayload.plainText(markdown)
         if suggestion != plain { suggestion = plain }
     }
 
     func speakCurrent() {
+        if action == .writeEnglish, isStreaming {
+            guard let index = candidateIndex, liveWriteSections.finished.indices.contains(index),
+                  liveWriteSections.finished[index] else { return }
+        }
         guard let speechText else { return }
         speech.toggle(speechText, language: action == .writeEnglish ? requestLanguage : .english)
     }
@@ -118,7 +125,7 @@ final class AssistantSession: ObservableObject {
         questions.reset()
         self.action = action
         phase = .input; input = ""; suggestion = ""; result = nil; candidateIndex = nil
-        resultMeasure = nil; inputMeasure = nil; streamingMarkdown = nil
+        resultMeasure = nil; inputMeasure = nil; streamingMarkdown = nil; usesGroupedWriteProtocol = false
         warnings = []; message = ""; target = nil; sourceName = "Manual input"; rawResponse = nil; rawRequest = nil
         guard capture else {
             completion(nil)
@@ -168,8 +175,9 @@ final class AssistantSession: ObservableObject {
             self.target = nil
             sourceName = "Manual input"
         }
-        phase = .processing; message = ""; result = nil; candidateIndex = nil; warnings = []; rawResponse = nil
+        phase = .processing; message = ""; result = nil; candidateIndex = nil; suggestion = ""; warnings = []; rawResponse = nil
         lastStreamed = nil; pendingNotice = nil
+        usesGroupedWriteProtocol = action == .writeEnglish
         streamingMarkdown = ""
         elapsedSeconds = nil; requestStartedAt = Date()
         let id = UUID(); requestID = id
@@ -215,7 +223,7 @@ final class AssistantSession: ObservableObject {
                         result = parsed
                     } else {
                         // Malformed answer: keep it visible/copyable as best effort.
-                        result = BestEffortResult.make(content: content, action: action)
+                        result = BestEffortResult.make(content: content, action: action, plainWriteBodies: self.usesGroupedWriteProtocol)
                         self.pendingNotice = "The answer format was unexpected, so it is shown without the usual sections."
                     }
                 } else {
@@ -244,7 +252,7 @@ final class AssistantSession: ObservableObject {
                 // If anything streamed before the failure, keep it as a
                 // best-effort result instead of dismissing to the error/input page.
                 if let streamed = self.lastStreamedNonEmpty, !streamed.isEmpty {
-                    let fallback = BestEffortResult.make(content: streamed, action: action)
+                    let fallback = BestEffortResult.make(content: streamed, action: action, plainWriteBodies: self.usesGroupedWriteProtocol)
                     self.rawResponse = inference.lastRawResponse ?? streamed
                     self.resultMeasure = nil
                     self.streamingMarkdown = nil
@@ -281,7 +289,7 @@ final class AssistantSession: ObservableObject {
             guard !visible.isEmpty else { return }
             let position = visible.firstIndex(of: candidateIndex ?? -1) ?? 0
             let index = visible[min(max(position + offset, 0), visible.count - 1)]
-            chooseStreamingCandidate(index, plain: WritingMarkdownPayload.plainText(liveWriteSections.cards[index]!))
+            chooseStreamingCandidate(index, plain: liveWriteSections.plainAnswer(at: index) ?? "")
             return
         }
         guard phase == .result, action == .writeEnglish, let result else { return }

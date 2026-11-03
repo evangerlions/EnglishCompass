@@ -25,7 +25,15 @@ public struct StreamingSections {
 
     public mutating func ingest(_ full: String, known: [String]) {
         var new = StreamingSections()
-        for raw in full.replacingOccurrences(of: "\r\n", with: "\n").components(separatedBy: "\n") {
+        let lines = full.replacingOccurrences(of: "\r\n", with: "\n").components(separatedBy: "\n")
+        for (index, raw) in lines.enumerated() {
+            // A header may arrive split across deltas. Keep its unfinished tail
+            // out of the answer/copy target until the next delta resolves it.
+            let tail = raw.trimmingCharacters(in: .whitespaces)
+            if known.contains("General Notes"), index == lines.count - 1, tail.hasPrefix("#") {
+                let prefix = tail.drop(while: { $0 == "#" }).trimmingCharacters(in: .whitespaces)
+                if known.contains(where: { $0.lowercased().hasPrefix(prefix.lowercased()) && $0.count > prefix.count }) { continue }
+            }
             if let heading = Self.heading(raw, known: known) {
                 if !new.order.contains(heading) { new.order.append(heading) }
                 new.current = heading
@@ -60,6 +68,13 @@ public struct StreamingSections {
 }
 
 public extension StreamingSections {
-    static let writeHeadings = ["General", "Direction", "Alternative", "Notes", "Summary"]
+    /// Wait for a line/section boundary: a streamed `1` may still become `10`.
+    var writeOriginalScore: Int? {
+        guard let raw = bodies[WritingMarkdownPayload.scoreHeading],
+              current != WritingMarkdownPayload.scoreHeading || raw.trimmingCharacters(in: .whitespaces).hasSuffix("\n") else { return nil }
+        return WritingMarkdownPayload.score(raw)
+    }
+
+    static let writeHeadings = WritingMarkdownPayload.scoredHeadings + ["Notes", "Summary"]
     static let understandHeadings = ["Translation", "Notes"]
 }

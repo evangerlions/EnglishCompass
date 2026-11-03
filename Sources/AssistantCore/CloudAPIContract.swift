@@ -83,8 +83,8 @@ public enum CloudAPIContract {
 
     /// Parses just the assistant message body (no response envelope). Used by the
     /// streaming path, which accumulates content deltas rather than a full JSON
-    /// envelope. Requirements are intentionally narrow: for Write the two
-    /// copy-ready answers and revision direction must be present; explanatory prose is free-form body.
+    /// envelope. Write pairs each copy-ready answer with its own explanation;
+    /// older Markdown payloads remain readable for compatibility.
     public static func parseContent(_ content: String, action: AssistantAction) throws -> ModelResult {
         if action == .writeEnglish {
             if let markdown = try? WritingMarkdownPayload.parse(content) { return markdown }

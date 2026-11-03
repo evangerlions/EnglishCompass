@@ -145,6 +145,32 @@ final class NativeInferenceTests: XCTestCase {
         XCTAssertEqual(session.suggestion, "Hello.")
     }
 
+    @MainActor func testScoredOptionalRepliesCommitThroughStreamingSession() async throws {
+        defer { clearStub() }
+        let name = "ScoredWritingTests.\(UUID().uuidString)"
+        let defaults = UserDefaults(suiteName: name)!
+        defer { defaults.removePersistentDomain(forName: name) }
+        let session = AssistantSession(preferences: Preferences(defaults: defaults), accessibility: AccessibilityBridge(), inference: service())
+        let first = "## Score\n10\n## General\nChanged by model.\n## General Notes\n说明。"
+        let second = "\n## Direction\n更自然\n## Alternative\nAnother model answer.\n## Alternative Notes\n说明。"
+        for content in [first + second, first] {
+            let payload = String(decoding: try JSONSerialization.data(withJSONObject: ["choices": [["delta": ["content": content]]]]), as: UTF8.self)
+            StubURLProtocol.handler = { _ in (200, Data("data: \(payload)\n\ndata: [DONE]\n\n".utf8)) }
+            session.input = "Original."
+            session.process()
+            for _ in 0..<200 where session.requestStartedAt != nil { try await Task.sleep(nanoseconds: 5_000_000) }
+            XCTAssertNil(session.requestStartedAt)
+            XCTAssertEqual(session.phase, .result)
+            XCTAssertFalse(session.isStreaming)
+            XCTAssertEqual(session.result?.originalScore, 10)
+            XCTAssertEqual(session.suggestion, "Changed by model.")
+            XCTAssertEqual(session.candidateIndex, 0)
+            XCTAssertEqual(session.result?.candidates.count, content == first ? 1 : 2)
+            session.moveCandidate(1)
+            XCTAssertEqual(session.candidateIndex, content == first ? 0 : 1)
+        }
+    }
+
     @MainActor func testOptionalLiveQwenPresetsSmoke() async throws {
         guard ProcessInfo.processInfo.environment["ENGLISHCOMPASS_TEST_MODELS"] == "1",
               let key = ProcessInfo.processInfo.environment["ENGLISHCOMPASS_TEST_KEY"], !key.isEmpty else {
@@ -157,8 +183,11 @@ final class NativeInferenceTests: XCTestCase {
             let content = try await inference.inferStream(text: "Please helps me fix this bug.",
                 action: .writeEnglish, additionalInstructions: "") { _ in }
             let result = try CloudAPIContract.parseContent(content, action: .writeEnglish)
-            XCTAssertEqual(result.candidates.count, 2)
-            XCTAssertFalse(result.summary.isEmpty)
+            XCTAssertTrue((1...2).contains(result.candidates.count))
+            XCTAssertEqual(result.explanations.count, result.candidates.count)
+            XCTAssertNotNil(result.originalScore)
+            XCTAssertTrue(result.explanations.allSatisfy { !$0.isEmpty })
+            XCTAssertTrue(result.summary.isEmpty)
             XCTAssertFalse(inference.lastRawRequest?.contains(key) == true)
             XCTAssertTrue(inference.lastRawResponse?.contains("[DONE]") == true)
             print("event=live_preset_smoke model=\(model.rawValue) candidates=\(result.candidates.count)")
@@ -447,8 +476,7 @@ final class NativeInferenceTests: XCTestCase {
     }
     @MainActor func testNativeRequestUsesFixedProviderAndCredentialHeader() async throws {
         defer { StubURLProtocol.handler = nil }
-        let fixture = WritingFixture.result
-        let content = "## General\n\(fixture.markdownCandidates[0])\n## Direction\n\(fixture.revisionDirection!)\n## Alternative\n\(fixture.markdownCandidates[1])\n\(fixture.summary)"
+        let content = WritingFixture.content
         let response: [String: Any] = ["model": "qwen3.7-flash", "choices": [
             ["index": 0, "finish_reason": "stop", "message": ["role": "assistant", "content": content]]]]
         StubURLProtocol.handler = { request in
