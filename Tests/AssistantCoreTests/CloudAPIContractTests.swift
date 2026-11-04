@@ -66,7 +66,12 @@ final class CloudAPIContractTests: XCTestCase {
             let prompt = try XCTUnwrap(messages.first?["content"])
             XCTAssertTrue(prompt.hasSuffix(instructions))
             XCTAssertTrue(prompt.contains("only when compatible"))
-            XCTAssertTrue(prompt.contains("Return only Markdown"))
+            if action == .writeEnglish {
+                XCTAssertTrue(prompt.contains("Start with ## Score"))
+                XCTAssertTrue(prompt.contains("## General Notes"))
+            } else {
+                XCTAssertTrue(prompt.contains("Return only Markdown"))
+            }
             XCTAssertTrue(prompt.contains("Preserve negation"))
             XCTAssertFalse(prompt.contains("Protected terms:"))
             XCTAssertEqual(messages[1]["content"], "Synthetic input")
