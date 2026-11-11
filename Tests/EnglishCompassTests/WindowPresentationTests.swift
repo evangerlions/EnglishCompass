@@ -130,6 +130,21 @@ final class WindowPresentationTests: XCTestCase {
         XCTAssertTrue(window.isVisible)
     }
 
+    @MainActor func testRestoreIfOpenPreservesPositionAndDoesNotRestoreHiddenWindows() {
+        let window = NSWindow(contentRect: NSRect(x: 200, y: 200, width: 540, height: 420),
+                              styleMask: [.titled, .closable], backing: .buffered, defer: false)
+        window.isReleasedWhenClosed = false
+        defer { window.close() }
+        window.orderOut(nil)
+        XCTAssertFalse(AssistantWindowPresentation.restoreIfOpen(window))
+        XCTAssertFalse(AssistantWindowPresentation.restoreIfOpen(nil))
+        window.orderFront(nil)
+        let frame = window.frame
+        XCTAssertTrue(AssistantWindowPresentation.restoreIfOpen(window))
+        XCTAssertTrue(window.isVisible)
+        XCTAssertEqual(window.frame, frame)
+    }
+
     @MainActor func testPackagedReleaseUsesDockAndLabHasSeparateIdentity() throws {
         let root = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
         let data = try Data(contentsOf: root.appendingPathComponent("Resources/Info.plist"))

@@ -24,6 +24,13 @@ enum AssistantWindowPresentation {
         if NSApp.activationPolicy() != policy { NSApp.setActivationPolicy(policy) }
     }
 
+    @discardableResult
+    static func restoreIfOpen(_ window: NSWindow?) -> Bool {
+        guard let window, window.isVisible || window.isMiniaturized else { return false }
+        restore(window)
+        return true
+    }
+
     static func restore(_ window: NSWindow) {
         if NSApp.activationPolicy() != .regular { NSApp.setActivationPolicy(.regular) }
         if window.isMiniaturized { window.deminiaturize(nil) }

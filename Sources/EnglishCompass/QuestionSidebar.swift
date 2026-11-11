@@ -5,7 +5,7 @@ import AssistantCore
 struct QuestionSidebar: View {
     @ObservedObject var conversation: QuestionSession
     var onClose: () -> Void
-    @State private var followsLatest = true
+    @State private var followsLatest = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {

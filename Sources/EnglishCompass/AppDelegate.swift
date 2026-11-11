@@ -118,6 +118,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     }
 
     private func showAssistant(_ action: AssistantAction, capture: Bool = true) {
+        if AssistantWindowPresentation.restoreIfOpen(panel) { return }
         session.begin(action, capture: capture) { [weak self] anchor in
             guard let self else { return }
             // Resolve any Keychain prompt before the panel exists on screen.
@@ -127,6 +128,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     }
 
     private func presentAssistant(anchor: CGRect?) {
+        let isNewPanel = panel == nil
         if panel == nil {
             let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 540, height: 470),
                                   styleMask: [.titled, .closable, .fullSizeContentView], backing: .buffered, defer: false)
@@ -146,7 +148,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             guard let anchor else { return screen == NSScreen.main }
             return screen.frame.contains(CGPoint(x: anchor.midX, y: screen.frame.maxY - anchor.midY))
         } ?? NSScreen.main
-        if let screen {
+        if isNewPanel, let screen {
             let bounds = screen.visibleFrame
             let x = anchor.map { $0.midX - 270 } ?? bounds.midX - 270
             let y = anchor.map { screen.frame.maxY - $0.minY - 470 } ?? bounds.midY - 170
