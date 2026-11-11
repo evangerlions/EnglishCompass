@@ -118,7 +118,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     }
 
     private func showAssistant(_ action: AssistantAction, capture: Bool = true) {
-        if AssistantWindowPresentation.restoreIfOpen(panel) { return }
+        if AssistantWindowPresentation.restoreIfOpen(panel, capturingSelection: capture) { return }
         session.begin(action, capture: capture) { [weak self] anchor in
             guard let self else { return }
             // Resolve any Keychain prompt before the panel exists on screen.

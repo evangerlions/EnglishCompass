@@ -136,11 +136,13 @@ final class WindowPresentationTests: XCTestCase {
         window.isReleasedWhenClosed = false
         defer { window.close() }
         window.orderOut(nil)
-        XCTAssertFalse(AssistantWindowPresentation.restoreIfOpen(window))
-        XCTAssertFalse(AssistantWindowPresentation.restoreIfOpen(nil))
+        XCTAssertFalse(AssistantWindowPresentation.restoreIfOpen(window, capturingSelection: false))
+        XCTAssertFalse(AssistantWindowPresentation.restoreIfOpen(nil, capturingSelection: false))
         window.orderFront(nil)
         let frame = window.frame
-        XCTAssertTrue(AssistantWindowPresentation.restoreIfOpen(window))
+        XCTAssertFalse(AssistantWindowPresentation.restoreIfOpen(window, capturingSelection: true),
+                       "A selection shortcut must capture new input before activating the assistant")
+        XCTAssertTrue(AssistantWindowPresentation.restoreIfOpen(window, capturingSelection: false))
         XCTAssertTrue(window.isVisible)
         XCTAssertEqual(window.frame, frame)
     }

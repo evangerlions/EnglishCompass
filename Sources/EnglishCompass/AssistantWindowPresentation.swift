@@ -25,8 +25,9 @@ enum AssistantWindowPresentation {
     }
 
     @discardableResult
-    static func restoreIfOpen(_ window: NSWindow?) -> Bool {
-        guard let window, window.isVisible || window.isMiniaturized else { return false }
+    static func restoreIfOpen(_ window: NSWindow?, capturingSelection: Bool) -> Bool {
+        // The source app must retain focus until selection capture finishes.
+        guard !capturingSelection, let window, window.isVisible || window.isMiniaturized else { return false }
         restore(window)
         return true
     }
