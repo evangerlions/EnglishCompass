@@ -68,7 +68,7 @@ struct UnderstandingResultView: View {
                 }
                 section(title: "翻译", systemImage: "character.bubble") {
                     if let t = live.translation {
-                        Text(markdown(t)).font(.system(size: 17))
+                        Text(markdown(t)).font(.system(size: 14))
                             .textSelection(.enabled).fixedSize(horizontal: false, vertical: true)
                     } else {
                         HStack(spacing: 8) {
@@ -124,7 +124,7 @@ struct UnderstandingResultView: View {
                     }
                     section(title: "翻译", systemImage: "character.bubble") {
                         Text(translation(result, index: index))
-                            .font(.system(size: 17, weight: .medium))
+                            .font(.system(size: 14, weight: .medium))
                             .textSelection(.enabled)
                             .fixedSize(horizontal: false, vertical: true)
                     }
