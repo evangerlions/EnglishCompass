@@ -209,6 +209,16 @@ final class ResultInteractionTests: XCTestCase {
         XCTAssertFalse(blocks.contains { String($0.text.characters).contains("##") })
     }
 
+    func testTranslationMarkdownKeepsHeadingsParagraphsAndListItemsSeparate() {
+        let blocks = MarkdownDocument.blocks("# 换行测试\n\n这是第一段。\n\n## 检查清单\n- 第一项\n- **第二项**\n\n最后一段。")
+        XCTAssertEqual(blocks.map { String($0.text.characters) }, ["换行测试", "这是第一段。", "检查清单", "第一项", "第二项", "最后一段。"])
+        XCTAssertEqual(blocks[0].headingLevel, 1)
+        XCTAssertEqual(blocks[2].headingLevel, 2)
+        XCTAssertEqual(blocks[3].marker, "•")
+        XCTAssertEqual(blocks[4].marker, "•")
+        XCTAssertTrue(blocks[4].text.runs.contains { $0.inlinePresentationIntent?.contains(.stronglyEmphasized) == true })
+    }
+
     func testMarkdownTableGroupsCellsInRowsAndRendersDivider() {
         let blocks = MarkdownDocument.blocks("|Term|Meaning|\n|---|---|\n|**help**|帮助|\n\n---\n")
         XCTAssertEqual(blocks.count, 3)

@@ -61,6 +61,7 @@ struct UnderstandingResultView: View {
                     section(title: "原文", systemImage: "text.quote") {
                         HStack(alignment: .top, spacing: 8) {
                             Text(session.input).font(.system(size: 14))
+                                .lineSpacing(4)
                                 .textSelection(.enabled).fixedSize(horizontal: false, vertical: true)
                             Spacer(minLength: 0)
                         }
@@ -68,8 +69,7 @@ struct UnderstandingResultView: View {
                 }
                 section(title: "翻译", systemImage: "character.bubble") {
                     if let t = live.translation {
-                        Text(markdown(t)).font(.system(size: 14))
-                            .textSelection(.enabled).fixedSize(horizontal: false, vertical: true)
+                        MarkdownBody(source: t, fontSize: 14, lineSpacing: 4)
                     } else {
                         HStack(spacing: 8) {
                             Text("等待生成…").font(.system(size: 14)).foregroundStyle(.tertiary)
@@ -79,7 +79,7 @@ struct UnderstandingResultView: View {
                 }
                 if let notes = live.notes {
                     section(title: "讲解", systemImage: "text.book.closed") {
-                        MarkdownBody(source: notes, fontSize: 13).foregroundStyle(.secondary)
+                        MarkdownBody(source: notes, fontSize: 13, lineSpacing: 4).foregroundStyle(.secondary)
                     }
                 }
             }.padding(2)
@@ -114,6 +114,7 @@ struct UnderstandingResultView: View {
                             HStack(alignment: .top, spacing: 8) {
                                 Text(session.input)
                                     .font(.system(size: 14))
+                                    .lineSpacing(4)
                                     .textSelection(.enabled)
                                     .fixedSize(horizontal: false, vertical: true)
                                 Spacer(minLength: 0)
@@ -123,15 +124,20 @@ struct UnderstandingResultView: View {
                         }
                     }
                     section(title: "翻译", systemImage: "character.bubble") {
-                        Text(translation(result, index: index))
-                            .font(.system(size: 14, weight: .medium))
-                            .textSelection(.enabled)
-                            .fixedSize(horizontal: false, vertical: true)
+                        if result.markdownCandidates.indices.contains(index) {
+                            MarkdownBody(source: result.markdownCandidates[index], fontSize: 14, lineSpacing: 4)
+                        } else {
+                            Text(result.candidates[index])
+                                .font(.system(size: 14, weight: .medium))
+                                .lineSpacing(4)
+                                .textSelection(.enabled)
+                                .fixedSize(horizontal: false, vertical: true)
+                        }
                     }
                     let notes = notesMarkdown(result)
                     if !notes.isEmpty {
                         section(title: "讲解", systemImage: "text.book.closed") {
-                            MarkdownBody(source: notes, fontSize: 13).foregroundStyle(.secondary)
+                            MarkdownBody(source: notes, fontSize: 13, lineSpacing: 4).foregroundStyle(.secondary)
                         }
                     }
                     if !session.message.isEmpty && session.message != "Copied." {
@@ -184,19 +190,9 @@ struct UnderstandingResultView: View {
         .overlay(RoundedRectangle(cornerRadius: 10).strokeBorder(Color.primary.opacity(0.07)))
     }
 
-    private func translation(_ result: ModelResult, index: Int) -> AttributedString {
-        if result.markdownCandidates.indices.contains(index) {
-            return markdown(result.markdownCandidates[index])
-        }
-        return AttributedString(result.candidates[index])
-    }
-
     private func notesMarkdown(_ result: ModelResult) -> String {
         if !result.summary.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty { return result.summary }
         return result.explanations.map { "- \($0)" }.joined(separator: "\n")
     }
 
-    private func markdown(_ source: String) -> AttributedString {
-        (try? AttributedString(markdown: source, options: .init(interpretedSyntax: .full))) ?? AttributedString(source)
-    }
 }

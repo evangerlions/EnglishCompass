@@ -19,6 +19,27 @@ final class UnderstandingMarkdownPayloadTests: XCTestCase {
         XCTAssertTrue(result.explanations.isEmpty)
     }
 
+    func testTranslationPreservesParagraphsAndListLinesForDisplayAndCopy() throws {
+        let content = """
+        ## Translation
+        # 换行测试
+
+        这是第一段。
+
+        ## 检查清单
+        - 第一项
+        - **第二项**
+
+        最后一段。
+
+        ## Notes
+        - 说明
+        """
+        let result = try UnderstandingMarkdownPayload.parse(content)
+        XCTAssertEqual(result.markdownCandidates.first, "# 换行测试\n\n这是第一段。\n\n## 检查清单\n- 第一项\n- **第二项**\n\n最后一段。")
+        XCTAssertEqual(result.candidates.first, "# 换行测试\n\n这是第一段。\n\n## 检查清单\n- 第一项\n- 第二项\n\n最后一段。")
+    }
+
     func testMissingDuplicateAndUnexpectedSectionsFailClosed() throws {
         let invalid = [
             markdown.replacingOccurrences(of: "## Notes", with: "## Details"),

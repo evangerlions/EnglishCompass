@@ -7,6 +7,7 @@ import SwiftUI
 struct MarkdownBody: View {
     let source: String
     var fontSize: CGFloat = 12.5
+    var lineSpacing: CGFloat = 2
 
     var body: some View {
         VStack(alignment: .leading, spacing: 7) {
@@ -33,7 +34,7 @@ struct MarkdownBody: View {
                         .font(.system(size: block.headingLevel.map { fontSize + CGFloat(max(1, 5 - $0)) } ?? fontSize,
                                       weight: block.headingLevel == nil ? .regular : .semibold,
                                       design: block.isCode ? .monospaced : .default))
-                        .lineSpacing(2)
+                        .lineSpacing(lineSpacing)
                         .textSelection(.enabled)
                         .fixedSize(horizontal: false, vertical: true)
                         .frame(maxWidth: .infinity, alignment: .leading)
